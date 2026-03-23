@@ -283,3 +283,32 @@ fn repl_accepts_commands_and_exits() {
 
     assert!(combined.contains("soroban-debug repl ["));
 }
+
+#[test]
+fn repl_seeds_initial_storage() {
+    let wasm = fixture_wasm("counter");
+    let output = Command::new(env!("CARGO_BIN_EXE_soroban-debug"))
+        .env("NO_COLOR", "1")
+        .args([
+            "repl",
+            "--contract",
+            wasm.to_str().unwrap(),
+            "--storage",
+            r#"{"c": 42}"#,
+        ])
+        .write_stdin("call get\nexit\n")
+        .output()
+        .unwrap();
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        combined.contains("Result: I64(42)"),
+        "Storage was not seeded correctly in REPL\n{}",
+        combined
+    );
+}

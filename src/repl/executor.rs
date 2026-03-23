@@ -36,8 +36,6 @@ impl ReplExecutor {
         executor.enable_mock_all_auths();
 
         if let Some(storage_json) = &config.storage {
-            // Best-effort for parity with the rest of the CLI. The underlying
-            // executor currently treats this as a no-op placeholder.
             executor.set_initial_storage(storage_json.clone())?;
         }
 
