@@ -7,7 +7,7 @@
 //! - Post-invocation result formatting via [`super::result`].
 
 use crate::debugger::error_db::ErrorDatabase;
-use crate::inspector::budget::MemoryTracker;
+use crate::inspector::budget::{BudgetInspector, MemoryTracker};
 use crate::runtime::result::{format_invocation_result, ExecutionRecord};
 use crate::{DebuggerError, Result};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -91,6 +91,7 @@ pub fn invoke_function(
     }
 
     // ── The actual call ───────────────────────────────────────────────────────
+    let budget_before = BudgetInspector::get_cpu_usage(env.host());
     let invocation_result =
         env.try_invoke_contract::<Val, InvokeError>(contract_address, &func_symbol, args_vec);
     memory_tracker.record_snapshot(env.host(), "invoke:invoke");
@@ -108,6 +109,8 @@ pub fn invoke_function(
     memory_tracker.record_snapshot(env.host(), "invoke:result_convert");
 
     // Display budget / memory usage.
+    let budget_after = BudgetInspector::get_cpu_usage(env.host());
+    let execution_budget = budget_after.delta_from(&budget_before);
     crate::inspector::BudgetInspector::display(env.host());
     let memory_summary = memory_tracker.finalize(env.host());
     memory_summary.display();
@@ -116,6 +119,7 @@ pub fn invoke_function(
         function: function.to_string(),
         args: sc_args,
         result: record_result,
+        budget: execution_budget,
         storage_before,
         storage_after,
     };

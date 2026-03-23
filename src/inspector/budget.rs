@@ -173,6 +173,18 @@ impl BudgetInfo {
             (self.memory_bytes as f64 / self.memory_limit as f64) * 100.0
         }
     }
+
+    /// Compute the resource usage delta relative to an earlier snapshot.
+    pub fn delta_from(&self, previous: &BudgetInfo) -> BudgetInfo {
+        BudgetInfo {
+            cpu_instructions: self
+                .cpu_instructions
+                .saturating_sub(previous.cpu_instructions),
+            cpu_limit: self.cpu_limit,
+            memory_bytes: self.memory_bytes.saturating_sub(previous.memory_bytes),
+            memory_limit: self.memory_limit,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -241,6 +253,28 @@ mod tests {
         assert_eq!(warnings.len(), 1);
         assert!(matches!(warnings[0].severity, Severity::Critical));
         assert!(warnings[0].suggestion.is_some());
+    }
+
+    #[test]
+    fn test_budget_delta_from_previous_snapshot() {
+        let previous = BudgetInfo {
+            cpu_instructions: 10,
+            cpu_limit: 100,
+            memory_bytes: 20,
+            memory_limit: 200,
+        };
+        let current = BudgetInfo {
+            cpu_instructions: 35,
+            cpu_limit: 100,
+            memory_bytes: 45,
+            memory_limit: 200,
+        };
+
+        let delta = current.delta_from(&previous);
+        assert_eq!(delta.cpu_instructions, 25);
+        assert_eq!(delta.memory_bytes, 25);
+        assert_eq!(delta.cpu_limit, 100);
+        assert_eq!(delta.memory_limit, 200);
     }
 }
 

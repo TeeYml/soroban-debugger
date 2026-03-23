@@ -4,6 +4,7 @@
 //! contract function invocation, including execution traces, storage diffs,
 //! and instruction-level profiling data.
 
+use crate::inspector::budget::BudgetInfo;
 use soroban_env_host::xdr::ScVal;
 use soroban_env_host::{ConversionError, TryFromVal};
 use soroban_sdk::{InvokeError, Val};
@@ -18,6 +19,7 @@ pub struct ExecutionRecord {
     pub function: String,
     pub args: Vec<ScVal>,
     pub result: std::result::Result<ScVal, String>,
+    pub budget: BudgetInfo,
     pub storage_before: HashMap<String, String>,
     pub storage_after: HashMap<String, String>,
 }
