@@ -98,6 +98,15 @@ soroban-debug server --port 9229 \
 
 The debug protocol uses JSON messages over TCP with line-delimited encoding.
 
+### Protocol Compatibility Matrix
+
+The backend and adapter negotiate a protocol version during the required `Handshake` request.
+If there is no overlap in supported versions, the session fails fast with an actionable error.
+
+| Wire protocol | Backend (`soroban-debug`) | VS Code extension | Notes |
+| --- | --- | --- | --- |
+| 1 | >= 0.1.0 | >= 0.1.0 | Handshake required; highest common version selected |
+
 ### Message Format
 
 ```json
@@ -115,6 +124,20 @@ The debug protocol uses JSON messages over TCP with line-delimited encoding.
 ```
 
 ### Request Types
+
+#### Handshake (Required)
+
+Clients MUST negotiate a compatible protocol version before issuing other debug requests.
+
+```json
+{
+  "type": "Handshake",
+  "client_name": "vscode-extension",
+  "client_version": "0.1.0",
+  "protocol_min": 1,
+  "protocol_max": 1
+}
+```
 
 #### Authenticate
 ```json
@@ -185,6 +208,30 @@ The debug protocol uses JSON messages over TCP with line-delimited encoding.
 ```
 
 ### Response Types
+
+#### HandshakeAck
+```json
+{
+  "type": "HandshakeAck",
+  "server_name": "soroban-debug",
+  "server_version": "0.1.0",
+  "protocol_min": 1,
+  "protocol_max": 1,
+  "selected_version": 1
+}
+```
+
+#### IncompatibleProtocol
+```json
+{
+  "type": "IncompatibleProtocol",
+  "message": "Protocol mismatch: ... Upgrade the older component.",
+  "server_name": "soroban-debug",
+  "server_version": "0.1.0",
+  "protocol_min": 1,
+  "protocol_max": 1
+}
+```
 
 #### Authenticated
 ```json

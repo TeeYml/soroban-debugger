@@ -65,3 +65,33 @@ export interface DebuggerState {
   variables?: Variable[];
   args?: string;
 }
+
+// Wire protocol version negotiation (debug adapter <-> backend)
+export const WIRE_PROTOCOL_MIN_VERSION = 1;
+export const WIRE_PROTOCOL_MAX_VERSION = 1;
+
+export type WireHandshakeRequest = {
+  type: 'Handshake';
+  client_name: string;
+  client_version: string;
+  protocol_min: number;
+  protocol_max: number;
+};
+
+export type WireHandshakeAck = {
+  type: 'HandshakeAck';
+  server_name: string;
+  server_version: string;
+  protocol_min: number;
+  protocol_max: number;
+  selected_version: number;
+};
+
+export type WireIncompatibleProtocol = {
+  type: 'IncompatibleProtocol';
+  message: string;
+  server_name: string;
+  server_version: string;
+  protocol_min: number;
+  protocol_max: number;
+};

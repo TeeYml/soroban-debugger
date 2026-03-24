@@ -1,6 +1,9 @@
 use crate::debugger::engine::DebuggerEngine;
 use crate::inspector::budget::BudgetInspector;
-use crate::server::protocol::{DebugMessage, DebugRequest, DebugResponse};
+use crate::server::protocol::{
+    negotiate_protocol_version, DebugMessage, DebugRequest, DebugResponse, PROTOCOL_MAX_VERSION,
+    PROTOCOL_MIN_VERSION,
+};
 use crate::simulator::SnapshotLoader;
 use crate::Result;
 use std::fs;
@@ -84,6 +87,7 @@ impl DebugServer {
         S: tokio::io::AsyncRead + AsyncWriteExt + Unpin,
     {
         let mut authenticated = self.token.is_none();
+        let mut handshake_done = false;
         let (reader, mut writer) = tokio::io::split(stream);
         let mut reader = BufReader::new(reader);
         let mut line = String::new();
@@ -113,6 +117,63 @@ impl DebugServer {
 
             if matches!(request, DebugRequest::Ping) {
                 let response = DebugMessage::response(message.id, DebugResponse::Pong);
+                send_response(&mut writer, response).await?;
+                continue;
+            }
+
+            if let DebugRequest::Handshake {
+                client_name,
+                client_version,
+                protocol_min,
+                protocol_max,
+            } = &request
+            {
+                let server_name = "soroban-debug".to_string();
+                let server_version = env!("CARGO_PKG_VERSION").to_string();
+
+                match negotiate_protocol_version(*protocol_min, *protocol_max) {
+                    Ok(selected_version) => {
+                        handshake_done = true;
+                        let response = DebugMessage::response(
+                            message.id,
+                            DebugResponse::HandshakeAck {
+                                server_name,
+                                server_version,
+                                protocol_min: PROTOCOL_MIN_VERSION,
+                                protocol_max: PROTOCOL_MAX_VERSION,
+                                selected_version,
+                            },
+                        );
+                        send_response(&mut writer, response).await?;
+                        continue;
+                    }
+                    Err(e) => {
+                        let response = DebugMessage::response(
+                            message.id,
+                            DebugResponse::IncompatibleProtocol {
+                                message: format!(
+                                    "{}. Client: {}@{}. Upgrade the older component.",
+                                    e, client_name, client_version
+                                ),
+                                server_name,
+                                server_version,
+                                protocol_min: PROTOCOL_MIN_VERSION,
+                                protocol_max: PROTOCOL_MAX_VERSION,
+                            },
+                        );
+                        send_response(&mut writer, response).await?;
+                        return Ok(());
+                    }
+                }
+            }
+
+            if !handshake_done {
+                let response = DebugMessage::response(
+                    message.id,
+                    DebugResponse::Error {
+                        message: "Protocol handshake required: send a Handshake request before other debug requests.".to_string(),
+                    },
+                );
                 send_response(&mut writer, response).await?;
                 continue;
             }

@@ -1,10 +1,22 @@
 import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
-import { DebuggerProcess } from '../cli/debuggerProcess';
+import { DebuggerProcess, formatProtocolMismatchMessage } from '../cli/debuggerProcess';
 import { resolveSourceBreakpoints } from '../dap/sourceBreakpoints';
 
 async function main(): Promise<void> {
+  const compatibilityMessage = formatProtocolMismatchMessage({
+    extensionVersion: '0.1.0',
+    backendName: 'soroban-debug',
+    backendVersion: '0.0.0',
+    backendProtocolMin: 0,
+    backendProtocolMax: 0,
+    extra: 'Protocol mismatch: client supports [1..=1], server supports [0..=0]'
+  });
+  assert.match(compatibilityMessage, /Extension version:/, 'Expected protocol mismatch message to mention extension version');
+  assert.match(compatibilityMessage, /supports protocol/, 'Expected protocol mismatch message to mention backend protocol range');
+  assert.match(compatibilityMessage, /Remediation:/, 'Expected protocol mismatch message to include remediation guidance');
+
   const extensionRoot = process.cwd();
   const repoRoot = path.resolve(extensionRoot, '..', '..');
 

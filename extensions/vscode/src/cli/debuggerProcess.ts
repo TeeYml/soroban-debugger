@@ -2,6 +2,7 @@ import { ChildProcess, execFile, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as net from 'net';
 import * as path from 'path';
+import { WIRE_PROTOCOL_MAX_VERSION, WIRE_PROTOCOL_MIN_VERSION } from '../dap/protocol';
 
 export interface DebuggerProcessConfig {
   contractPath: string;
@@ -35,6 +36,7 @@ export interface DebuggerContinueResult {
 }
 
 type DebugRequest =
+  | { type: 'Handshake'; client_name: string; client_version: string; protocol_min: number; protocol_max: number }
   | { type: 'Authenticate'; token: string }
   | { type: 'LoadContract'; contract_path: string }
   | { type: 'Execute'; function: string; args?: string }
@@ -52,6 +54,8 @@ type DebugRequest =
   | { type: 'LoadSnapshot'; snapshot_path: string };
 
 type DebugResponse =
+  | { type: 'HandshakeAck'; server_name: string; server_version: string; protocol_min: number; protocol_max: number; selected_version: number }
+  | { type: 'IncompatibleProtocol'; message: string; server_name: string; server_version: string; protocol_min: number; protocol_max: number }
   | { type: 'Authenticated'; success: boolean; message: string }
   | { type: 'ContractLoaded'; size: number }
   | { type: 'ExecutionResult'; success: boolean; output: string; error?: string; paused: boolean; completed: boolean }
@@ -78,6 +82,33 @@ type PendingRequest = {
   reject: (error: Error) => void;
 };
 
+export function formatProtocolMismatchMessage(details: {
+  extensionVersion: string;
+  backendVersion?: string;
+  backendName?: string;
+  backendProtocolMin?: number;
+  backendProtocolMax?: number;
+  extra?: string;
+}): string {
+  const backendVersion = details.backendVersion || 'unknown';
+  const backendName = details.backendName || 'backend';
+  const backendRange = (details.backendProtocolMin !== undefined && details.backendProtocolMax !== undefined)
+    ? `[${details.backendProtocolMin}..=${details.backendProtocolMax}]`
+    : '(unknown range)';
+
+  const requestedRange = `[${WIRE_PROTOCOL_MIN_VERSION}..=${WIRE_PROTOCOL_MAX_VERSION}]`;
+
+  const lines = [
+    'Incompatible debugger protocol between VS Code extension and backend.',
+    `Extension version: ${details.extensionVersion} (expects protocol ${requestedRange})`,
+    `${backendName} version: ${backendVersion} (supports protocol ${backendRange})`,
+    details.extra ? `Details: ${details.extra}` : undefined,
+    'Remediation: upgrade the older component so both support at least one common protocol version.'
+  ].filter(Boolean);
+
+  return lines.join('\n');
+}
+
 export class DebuggerProcess {
   private process: ChildProcess | null = null;
   private socket: net.Socket | null = null;
@@ -86,6 +117,7 @@ export class DebuggerProcess {
   private pendingRequests = new Map<number, PendingRequest>();
   private config: DebuggerProcessConfig;
   private port: number | null = null;
+  private negotiatedProtocolVersion: number | null = null;
 
   constructor(config: DebuggerProcessConfig) {
     this.config = config;
@@ -96,52 +128,58 @@ export class DebuggerProcess {
       return;
     }
 
-    const binaryPath = this.resolveBinaryPath();
-    const port = this.config.port ?? await this.findAvailablePort();
-    this.port = port;
+    try {
+      const binaryPath = this.resolveBinaryPath();
+      const port = this.config.port ?? await this.findAvailablePort();
+      this.port = port;
 
-    const child = spawn(binaryPath, this.buildArgs(port), {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        ...(this.config.trace ? { RUST_LOG: 'debug' } : {})
-      }
-    });
-    this.process = child;
-
-    child.once('exit', () => {
-      this.rejectPendingRequests(new Error('Debugger server exited'));
-      this.socket?.destroy();
-      this.socket = null;
-    });
-
-    await this.waitForServer(port);
-    await this.connect(port);
-
-    if (this.config.token) {
-      const response = await this.sendRequest({
-        type: 'Authenticate',
-        token: this.config.token
+      const child = spawn(binaryPath, this.buildArgs(port), {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          ...(this.config.trace ? { RUST_LOG: 'debug' } : {})
+        }
       });
-      this.expectResponse(response, 'Authenticated');
-      if (!response.success) {
-        throw new Error(response.message);
-      }
-    }
+      this.process = child;
 
-    if (this.config.snapshotPath) {
-      const response = await this.sendRequest({
-        type: 'LoadSnapshot',
-        snapshot_path: this.config.snapshotPath
+      child.once('exit', () => {
+        this.rejectPendingRequests(new Error('Debugger server exited'));
+        this.socket?.destroy();
+        this.socket = null;
       });
-      this.expectResponse(response, 'SnapshotLoaded');
-    }
 
-    const contractResponse = await this.sendRequest({
-      type: 'LoadContract',
-      contract_path: this.config.contractPath
-    });
-    this.expectResponse(contractResponse, 'ContractLoaded');
+      await this.waitForServer(port);
+      await this.connect(port);
+      await this.negotiateProtocol();
+
+      if (this.config.token) {
+        const response = await this.sendRequest({
+          type: 'Authenticate',
+          token: this.config.token
+        });
+        this.expectResponse(response, 'Authenticated');
+        if (!response.success) {
+          throw new Error(response.message);
+        }
+      }
+
+      if (this.config.snapshotPath) {
+        const response = await this.sendRequest({
+          type: 'LoadSnapshot',
+          snapshot_path: this.config.snapshotPath
+        });
+        this.expectResponse(response, 'SnapshotLoaded');
+      }
+
+      const contractResponse = await this.sendRequest({
+        type: 'LoadContract',
+        contract_path: this.config.contractPath
+      });
+      this.expectResponse(contractResponse, 'ContractLoaded');
+    } catch (error) {
+      await this.stop().catch(() => undefined);
+      throw error;
+    }
   }
 
   async execute(): Promise<DebuggerExecutionResult> {
@@ -457,7 +495,12 @@ export class DebuggerProcess {
         continue;
       }
 
-      const message = JSON.parse(line) as DebugMessage;
+      let message: DebugMessage;
+      try {
+        message = JSON.parse(line) as DebugMessage;
+      } catch {
+        continue;
+      }
       const pending = this.pendingRequests.get(message.id);
       if (!pending || !message.response) {
         continue;
@@ -468,7 +511,10 @@ export class DebuggerProcess {
     }
   }
 
-  private async sendRequest(request: DebugRequest): Promise<DebugResponse> {
+  private async sendRequest(
+    request: DebugRequest,
+    options: { timeoutMs?: number } = {}
+  ): Promise<DebugResponse> {
     if (!this.socket) {
       throw new Error('Debugger connection is not established');
     }
@@ -478,7 +524,22 @@ export class DebuggerProcess {
     const message: DebugMessage = { id, request };
 
     const responsePromise = new Promise<DebugResponse>((resolve, reject) => {
-      this.pendingRequests.set(id, { resolve, reject });
+      const timeoutMs = options.timeoutMs ?? 30_000;
+      const timer = setTimeout(() => {
+        this.pendingRequests.delete(id);
+        reject(new Error(`Timed out waiting for debugger response to ${request.type}`));
+      }, timeoutMs);
+
+      this.pendingRequests.set(id, {
+        resolve: (response) => {
+          clearTimeout(timer);
+          resolve(response);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        }
+      });
     });
 
     this.socket.write(`${JSON.stringify(message)}\n`);
@@ -487,6 +548,57 @@ export class DebuggerProcess {
       throw new Error(response.message);
     }
     return response;
+  }
+
+  private getExtensionVersion(): string {
+    try {
+      const packageJsonPath = path.resolve(__dirname, '..', '..', 'package.json');
+      const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as { version?: string };
+      return pkg.version || 'unknown';
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  private async negotiateProtocol(): Promise<void> {
+    const extensionVersion = this.getExtensionVersion();
+
+    let response: DebugResponse;
+    try {
+      response = await this.sendRequest({
+        type: 'Handshake',
+        client_name: 'vscode-extension',
+        client_version: extensionVersion,
+        protocol_min: WIRE_PROTOCOL_MIN_VERSION,
+        protocol_max: WIRE_PROTOCOL_MAX_VERSION
+      }, { timeoutMs: 2_500 });
+    } catch (error) {
+      throw new Error(formatProtocolMismatchMessage({
+        extensionVersion,
+        extra: String(error)
+      }));
+    }
+
+    if (response.type === 'HandshakeAck') {
+      this.negotiatedProtocolVersion = response.selected_version;
+      return;
+    }
+
+    if (response.type === 'IncompatibleProtocol') {
+      throw new Error(formatProtocolMismatchMessage({
+        extensionVersion,
+        backendName: response.server_name,
+        backendVersion: response.server_version,
+        backendProtocolMin: response.protocol_min,
+        backendProtocolMax: response.protocol_max,
+        extra: response.message
+      }));
+    }
+
+    throw new Error(formatProtocolMismatchMessage({
+      extensionVersion,
+      extra: `Unexpected handshake response: ${response.type}`
+    }));
   }
 
   private rejectPendingRequests(error: Error): void {
