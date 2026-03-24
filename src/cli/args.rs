@@ -76,6 +76,17 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub no_banner: bool,
 
+    /// Override the history file location (useful for CI, sandboxes, and per-project isolation)
+    ///
+    /// Equivalent to setting `SOROBAN_DEBUG_HISTORY_FILE`.
+    #[arg(
+        long,
+        global = true,
+        env = "SOROBAN_DEBUG_HISTORY_FILE",
+        value_name = "FILE"
+    )]
+    pub history_file: Option<PathBuf>,
+
     /// Show historical budget trend visualization
     #[arg(long)]
     pub budget_trend: bool,
@@ -665,8 +676,16 @@ mod tests {
 
     #[test]
     fn run_server_mode_does_not_require_contract_or_function() {
-        let cli = Cli::try_parse_from(["soroban-debug", "run", "--server", "-p", "8888", "-t", "secret"])
-            .expect("failed to parse run --server");
+        let cli = Cli::try_parse_from([
+            "soroban-debug",
+            "run",
+            "--server",
+            "-p",
+            "8888",
+            "-t",
+            "secret",
+        ])
+        .expect("failed to parse run --server");
 
         let Commands::Run(args) = cli.command.expect("run command expected") else {
             panic!("run command expected");

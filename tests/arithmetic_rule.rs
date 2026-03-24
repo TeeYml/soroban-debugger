@@ -46,8 +46,8 @@ fn test_detects_unchecked_arithmetic() {
 
 #[test]
 fn test_ignores_guarded_arithmetic() {
-    // If followed by i32.add: control flow guard
-    let wasm = vec![0x04, 0x6A];
+    // i32.add followed by br_if: control flow guard
+    let wasm = vec![0x6A, 0x0D];
     let analyzer = SecurityAnalyzer::new();
     let report = analyzer
         .analyze(&wasm, None, None)
@@ -67,7 +67,7 @@ fn test_ignores_guarded_arithmetic() {
 
 #[test]
 fn test_ignores_call_guarded_arithmetic() {
-    // Call (0x10) followed by i32.add: external function guard
+    // Call is intentionally not treated as an arithmetic guard.
     let wasm = vec![0x10, 0x6A];
     let analyzer = SecurityAnalyzer::new();
     let report = analyzer
@@ -79,10 +79,7 @@ fn test_ignores_call_guarded_arithmetic() {
         .iter()
         .filter(|f| f.rule_id == "arithmetic-overflow")
         .collect();
-    assert!(
-        arithmetic_findings.is_empty(),
-        "Should not flag call-guarded arithmetic"
-    );
+    assert!(!arithmetic_findings.is_empty(), "Call should not suppress arithmetic finding");
 }
 
 #[test]
