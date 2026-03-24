@@ -16,7 +16,7 @@ use crate::repl::ReplConfig;
 use crate::runtime::executor::ContractExecutor;
 use crate::simulator::SnapshotLoader;
 use crate::ui::formatter::Formatter;
-use crate::ui::DebuggerUI;
+use crate::ui::{run_dashboard, DebuggerUI};
 use crate::{DebuggerError, Result};
 use miette::WrapErr;
 use std::fs;
@@ -1617,9 +1617,46 @@ pub fn interactive(args: InteractiveArgs, _verbosity: Verbosity) -> Result<()> {
 
 /// Launch TUI debugger
 pub fn tui(args: TuiArgs, _verbosity: Verbosity) -> Result<()> {
-    print_info("TUI mode is not yet implemented in this build");
-    print_info(format!("Contract: {:?}", args.contract));
-    Err(DebuggerError::ExecutionError("TUI mode not yet implemented".to_string()).into())
+    print_info(format!("Loading contract: {:?}", args.contract));
+    let wasm_file = crate::utils::wasm::load_wasm(&args.contract)
+        .with_context(|| format!("Failed to read WASM file: {:?}", args.contract))?;
+    let wasm_bytes = wasm_file.bytes;
+
+    print_success(format!(
+        "Contract loaded successfully ({} bytes)",
+        wasm_bytes.len()
+    ));
+
+    if let Some(snapshot_path) = &args.network_snapshot {
+        print_info(format!("Loading network snapshot: {:?}", snapshot_path));
+        logging::log_loading_snapshot(&snapshot_path.to_string_lossy());
+        let loader = SnapshotLoader::from_file(snapshot_path)?;
+        let loaded_snapshot = loader.apply_to_environment()?;
+        logging::log_display(loaded_snapshot.format_summary(), logging::LogLevel::Info);
+    }
+
+    let parsed_args = if let Some(args_json) = &args.args {
+        Some(parse_args(args_json)?)
+    } else {
+        None
+    };
+
+    let initial_storage = if let Some(storage_json) = &args.storage {
+        Some(parse_storage(storage_json)?)
+    } else {
+        None
+    };
+
+    let mut executor = ContractExecutor::new(wasm_bytes.clone())?;
+
+    if let Some(storage) = initial_storage {
+        executor.set_initial_storage(storage)?;
+    }
+
+    let mut engine = DebuggerEngine::new(executor, args.breakpoint.clone());
+    engine.stage_execution(&args.function, parsed_args.as_deref());
+
+    run_dashboard(engine, &args.function)
 }
 
 /// Inspect a WASM contract

@@ -65,8 +65,6 @@ pub enum ArgumentParseError {
         max: String,
     },
 }
-
-
 /// Argument parser for converting JSON to Soroban values
 pub struct ArgumentParser {
     env: Env,
