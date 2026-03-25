@@ -55,13 +55,18 @@ impl DebuggerEngine {
     ///
     /// Missing or malformed debug information does not fail execution; it simply leaves the
     /// engine without source mappings.
+    ///
+    /// The existing `SourceMap` instance is **reused** across calls so that its
+    /// internal parse cache is preserved.  If the WASM bytes have not changed
+    /// since the last load, the DWARF sections are not re-parsed.
     pub fn try_load_source_map(&mut self, wasm_bytes: &[u8]) {
-        let mut source_map = SourceMap::new();
+        // Reuse the existing instance to keep the hash-based parse cache alive.
+        let mut source_map = self.source_map.take().unwrap_or_default();
         match source_map.load(wasm_bytes) {
-            Ok(()) if !source_map.is_empty() => {
+            Ok(()) => {
                 self.source_map = Some(source_map);
             }
-            _ => {
+            Err(_) => {
                 self.source_map = None;
             }
         }
@@ -100,7 +105,8 @@ impl DebuggerEngine {
     }
 
     pub fn load_source_map(&mut self, wasm_bytes: &[u8]) -> Result<()> {
-        let mut source_map = SourceMap::new();
+        // Reuse the existing instance to keep the hash-based parse cache alive.
+        let mut source_map = self.source_map.take().unwrap_or_default();
         source_map.load(wasm_bytes)?;
         self.source_map = Some(source_map);
         Ok(())
