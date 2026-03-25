@@ -36,7 +36,7 @@ impl DebuggerEngine {
         let mut breakpoints = BreakpointManager::new();
 
         for bp in initial_breakpoints {
-            let _ = breakpoints.add(&bp, None);
+            breakpoints.add_simple(&bp);
             info!("Breakpoint set at function: {}", bp);
         }
 

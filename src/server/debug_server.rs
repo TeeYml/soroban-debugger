@@ -1,10 +1,10 @@
 use crate::debugger::engine::{DebuggerEngine, StepOverResult};
 use crate::runtime::executor::ContractExecutor;
 use crate::debugger::engine::DebuggerEngine;
+use crate::debugger::breakpoint::{BreakpointManager, BreakpointSpec};
 use crate::inspector::budget::BudgetInspector;
 use crate::server::protocol::{
-    negotiate_protocol_version, DebugMessage, DebugRequest, DebugResponse, PROTOCOL_MAX_VERSION,
-    PROTOCOL_MIN_VERSION,
+    BreakpointCapabilities, BreakpointDescriptor, DebugMessage, DebugRequest, DebugResponse,
 };
 use crate::simulator::SnapshotLoader;
 use crate::Result;
@@ -56,6 +56,12 @@ impl DebugServer {
             .await
             .map_err(|e| miette::miette!("Failed to bind to {}: {}", addr, e))?;
         info!("Debug server listening on {}", addr);
+        if self.token.is_some() && self.tls_config.is_none() {
+            warn!(
+                "Token authentication is enabled without TLS. Treat this as plaintext transport and \
+                 restrict access to trusted network boundaries or add TLS termination."
+            );
+        }
 
         let acceptor = self
             .tls_config
@@ -115,7 +121,7 @@ impl DebugServer {
                 warn!("Received message without request");
                 continue;
             };
-            info!("Received request: {:?}", request);
+            info!("Received request: {}", summarize_request(&request));
 
             if matches!(request, DebugRequest::Ping) {
                 let response = DebugMessage::response(message.id, DebugResponse::Pong);
@@ -240,44 +246,44 @@ impl DebugServer {
                     },
                 },
                 DebugRequest::Execute { function, args } => match self.engine.as_mut() {
-                    Some(engine) if engine.breakpoints().should_break(&function, 0, args.as_deref()) => {
-                        engine.prepare_breakpoint_stop(&function, args.as_deref());
-                        self.pending_execution = Some(PendingExecution { function, args });
-                        DebugResponse::ExecutionResult {
-                            success: true,
-                            output: String::new(),
-                            error: None,
-                            paused: true,
-                            completed: false,
-                            source_location: None,
+                    Some(engine) if engine.breakpoints().should_break(&function) => {
+                        match current_storage(engine) {
+                            Ok(storage) => match engine
+                                .breakpoints_mut()
+                                .on_hit(&function, &storage, args.as_deref())
+                            {
+                                Ok(Some(hit)) => {
+                                    for message in hit.log_messages {
+                                        println!("{message}");
+                                    }
+
+                                    if hit.should_pause {
+                                        engine.prepare_breakpoint_stop(&function, args.as_deref());
+                                        self.pending_execution =
+                                            Some(PendingExecution { function, args });
+                                        DebugResponse::ExecutionResult {
+                                            success: true,
+                                            output: String::new(),
+                                            error: None,
+                                            paused: true,
+                                            completed: false,
+                                            source_location: None,
+                                        }
+                                    } else {
+                                        execute_without_breakpoints(engine, &function, args)
+                                    }
+                                }
+                                Ok(None) => execute_without_breakpoints(engine, &function, args),
+                                Err(e) => DebugResponse::Error {
+                                    message: e.to_string(),
+                                },
+                            },
+                            Err(e) => DebugResponse::Error {
+                                message: e.to_string(),
+                            },
                         }
                     }
-                    Some(engine) => {
-                        match engine.execute_without_breakpoints(&function, args.as_deref()) {
-                            Ok(res) => {
-                                self.pending_execution = None;
-                                DebugResponse::ExecutionResult {
-                                    success: true,
-                                    output: res,
-                                    error: None,
-                                    paused: engine.is_paused(),
-                                    completed: true,
-                                    source_location: None,
-                                }
-                            }
-                            Err(e) => {
-                                self.pending_execution = None;
-                                DebugResponse::ExecutionResult {
-                                    success: false,
-                                    output: String::new(),
-                                    error: Some(e.to_string()),
-                                    paused: false,
-                                    completed: true,
-                                    source_location: None,
-                                }
-                            }
-                        }
-                    }
+                    Some(engine) => execute_without_breakpoints(engine, &function, args),
                     None => DebugResponse::Error {
                         message: "No contract loaded".to_string(),
                     },
@@ -574,24 +580,65 @@ impl DebugServer {
                     },
                 },
                 DebugRequest::SetBreakpoint {
+                    id,
                     function,
                     condition,
+                    hit_condition,
+                    log_message,
                 } => match self.engine.as_mut() {
-                    Some(engine) => match engine.breakpoints_mut().add(&function, condition.as_deref())
-                    {
-                        Ok(_) => DebugResponse::BreakpointSet { function },
-                        Err(e) => DebugResponse::Error {
-                            message: format!("Failed to set breakpoint: {}", e),
-                        },
-                    },
+                    Some(engine) => {
+                        let condition = match condition {
+                            Some(condition) => match BreakpointManager::parse_condition(&condition) {
+                                Ok(condition) => Some(condition),
+                                Err(e) => {
+                                    let response = DebugMessage::response(
+                                        message.id,
+                                        DebugResponse::Error {
+                                            message: e.to_string(),
+                                        },
+                                    );
+                                    send_response(&mut writer, response).await?;
+                                    continue;
+                                }
+                            },
+                            None => None,
+                        };
+                        let hit_condition = match hit_condition {
+                            Some(hit_condition) => {
+                                match BreakpointManager::parse_hit_condition(&hit_condition) {
+                                    Ok(hit_condition) => Some(hit_condition),
+                                    Err(e) => {
+                                        let response = DebugMessage::response(
+                                            message.id,
+                                            DebugResponse::Error {
+                                                message: e.to_string(),
+                                            },
+                                        );
+                                        send_response(&mut writer, response).await?;
+                                        continue;
+                                    }
+                                }
+                            }
+                            None => None,
+                        };
+
+                        engine.breakpoints_mut().add(BreakpointSpec {
+                            id: id.clone(),
+                            function: function.clone(),
+                            condition,
+                            hit_condition,
+                            log_message,
+                        });
+                        DebugResponse::BreakpointSet { id, function }
+                    }
                     None => DebugResponse::Error {
                         message: "No contract loaded".to_string(),
                     },
                 },
-                DebugRequest::ClearBreakpoint { function } => match self.engine.as_mut() {
+                DebugRequest::ClearBreakpoint { id } => match self.engine.as_mut() {
                     Some(engine) => {
-                        engine.breakpoints_mut().remove(&function);
-                        DebugResponse::BreakpointCleared { function }
+                        engine.breakpoints_mut().remove(&id);
+                        DebugResponse::BreakpointCleared { id }
                     }
                     None => DebugResponse::Error {
                         message: "No contract loaded".to_string(),
@@ -599,10 +646,28 @@ impl DebugServer {
                 },
                 DebugRequest::ListBreakpoints => match self.engine.as_mut() {
                     Some(engine) => DebugResponse::BreakpointsList {
-                        breakpoints: engine.breakpoints_mut().list(),
+                        breakpoints: engine
+                            .breakpoints_mut()
+                            .list_detailed()
+                            .into_iter()
+                            .map(|breakpoint| BreakpointDescriptor {
+                                id: breakpoint.id,
+                                function: breakpoint.function,
+                                condition: breakpoint.condition,
+                                hit_condition: breakpoint.hit_condition,
+                                log_message: breakpoint.log_message,
+                            })
+                            .collect(),
                     },
                     None => DebugResponse::Error {
                         message: "No contract loaded".to_string(),
+                    },
+                },
+                DebugRequest::GetCapabilities => DebugResponse::Capabilities {
+                    breakpoints: BreakpointCapabilities {
+                        conditional_breakpoints: true,
+                        hit_conditional_breakpoints: true,
+                        log_points: true,
                     },
                 },
                 DebugRequest::SetStorage { storage_json } => match self.engine.as_mut() {
@@ -734,6 +799,99 @@ where
     Ok(())
 }
 
+fn execute_without_breakpoints(
+    engine: &mut DebuggerEngine,
+    function: &str,
+    args: Option<String>,
+) -> DebugResponse {
+    match engine.execute_without_breakpoints(function, args.as_deref()) {
+        Ok(res) => DebugResponse::ExecutionResult {
+            success: true,
+            output: res,
+            error: None,
+            paused: engine.is_paused(),
+            completed: true,
+            source_location: None,
+        },
+        Err(e) => DebugResponse::ExecutionResult {
+            success: false,
+            output: String::new(),
+            error: Some(e.to_string()),
+            paused: false,
+            completed: true,
+            source_location: None,
+        },
+    }
+}
+
+fn current_storage(engine: &DebuggerEngine) -> Result<std::collections::HashMap<String, String>> {
+    let snapshot = engine.executor().get_storage_snapshot()?;
+    Ok(snapshot
+        .into_iter()
+        .map(|(key, value)| {
+            let value = match value {
+                serde_json::Value::String(value) => value,
+                other => other.to_string(),
+            };
+            (key, value)
+        })
+        .collect())
+}
+
+fn summarize_request(request: &DebugRequest) -> String {
+    match request {
+        DebugRequest::Authenticate { token } => {
+            format!("Authenticate {{ token: {} }}", redact_secret(token))
+        }
+        DebugRequest::LoadContract { contract_path } => {
+            format!("LoadContract {{ contract_path: {:?} }}", contract_path)
+        }
+        DebugRequest::Execute { function, args } => {
+            format!(
+                "Execute {{ function: {:?}, args_present: {} }}",
+                function,
+                args.is_some()
+            )
+        }
+        DebugRequest::StepIn => "StepIn".to_string(),
+        DebugRequest::Next => "Next".to_string(),
+        DebugRequest::StepOut => "StepOut".to_string(),
+        DebugRequest::Continue => "Continue".to_string(),
+        DebugRequest::Inspect => "Inspect".to_string(),
+        DebugRequest::GetStorage => "GetStorage".to_string(),
+        DebugRequest::GetStack => "GetStack".to_string(),
+        DebugRequest::GetBudget => "GetBudget".to_string(),
+        DebugRequest::SetBreakpoint { id, function, .. } => {
+            format!("SetBreakpoint {{ id: {:?}, function: {:?} }}", id, function)
+        }
+        DebugRequest::ClearBreakpoint { id } => {
+            format!("ClearBreakpoint {{ id: {:?} }}", id)
+        }
+        DebugRequest::ListBreakpoints => "ListBreakpoints".to_string(),
+        DebugRequest::GetCapabilities => "GetCapabilities".to_string(),
+        DebugRequest::SetStorage { .. } => "SetStorage { storage_json: <redacted> }".to_string(),
+        DebugRequest::LoadSnapshot { snapshot_path } => {
+            format!("LoadSnapshot {{ snapshot_path: {:?} }}", snapshot_path)
+        }
+        DebugRequest::Evaluate { expression, frame_id } => {
+            format!(
+                "Evaluate {{ expression: {:?}, frame_id: {:?} }}",
+                expression, frame_id
+            )
+        }
+        DebugRequest::Ping => "Ping".to_string(),
+        DebugRequest::Disconnect => "Disconnect".to_string(),
+    }
+}
+
+fn redact_secret(secret: &str) -> String {
+    if secret.is_empty() {
+        "<redacted:empty>".to_string()
+    } else {
+        format!("<redacted:{} chars>", secret.chars().count())
+    }
+}
+
 fn load_tls_config(cert_path: &Path, key_path: &Path) -> Result<ServerConfig> {
     let cert_file = fs::File::open(cert_path)
         .map_err(|e| miette::miette!("Failed to open cert file {:?}: {}", cert_path, e))?;
@@ -761,4 +919,28 @@ fn load_tls_config(cert_path: &Path, key_path: &Path) -> Result<ServerConfig> {
         .map_err(|e| miette::miette!("Failed to setup TLS config: {}", e))?;
 
     Ok(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::protocol::DebugRequest;
+
+    #[test]
+    fn request_summary_redacts_auth_token() {
+        let summary = summarize_request(&DebugRequest::Authenticate {
+            token: "super-secret-token".to_string(),
+        });
+        assert!(summary.contains("<redacted:18 chars>"));
+        assert!(!summary.contains("super-secret-token"));
+    }
+
+    #[test]
+    fn request_summary_redacts_storage_payloads() {
+        let summary = summarize_request(&DebugRequest::SetStorage {
+            storage_json: "{\"token\":\"secret\"}".to_string(),
+        });
+        assert!(summary.contains("<redacted>"));
+        assert!(!summary.contains("secret"));
+    }
 }

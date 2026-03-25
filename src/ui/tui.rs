@@ -154,23 +154,8 @@ impl DebuggerUI {
                 if parts.len() < 2 {
                     tracing::warn!("breakpoint set without function name");
                 } else {
-                    let function = parts[1];
-                    let condition = if parts.len() > 2 {
-                        Some(parts[2..].join(" "))
-                    } else {
-                        None
-                    };
-                    match self.engine.breakpoints_mut().add(function, condition.as_deref()) {
-                        Ok(_) => {
-                            crate::logging::log_breakpoint_set(function);
-                        }
-                        Err(e) => {
-                            crate::logging::log_display(
-                                format!("Failed to set breakpoint: {}", e),
-                                crate::logging::LogLevel::Error,
-                            );
-                        }
-                    }
+                    self.engine.breakpoints_mut().add_simple(parts[1]);
+                    crate::logging::log_breakpoint_set(parts[1]);
                 }
             }
             "list-breaks" => {
@@ -193,7 +178,7 @@ impl DebuggerUI {
             "clear" => {
                 if parts.len() < 2 {
                     tracing::warn!("clear command missing function name");
-                } else if self.engine.breakpoints_mut().remove(parts[1]) {
+                } else if self.engine.breakpoints_mut().remove_function(parts[1]) {
                     crate::logging::log_breakpoint_cleared(parts[1]);
                 } else {
                     tracing::debug!(breakpoint = parts[1], "No breakpoint found at function");

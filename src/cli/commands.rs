@@ -158,6 +158,12 @@ fn render_security_report(output: &AnalyzeCommandOutput) -> String {
             )
         );
         lines.push(format!("     {}", finding.description));
+        if let Some(confidence) = finding.confidence {
+            lines.push(format!("     Confidence: {:.0}%", confidence * 100.0));
+        }
+        if let Some(rationale) = &finding.rationale {
+            lines.push(format!("     Rationale: {}", rationale));
+        }
         lines.push(format!("     Remediation: {}", finding.remediation));
     }
 
@@ -1642,13 +1648,24 @@ pub fn replay(args: ReplayArgs, verbosity: Verbosity) -> Result<()> {
 /// Start debug server for remote connections
 pub fn server(args: ServerArgs) -> Result<()> {
     print_info(format!("Starting remote debug server on port {}", args.port));
-    if args.token.is_some() {
+    if let Some(token) = &args.token {
         print_info("Token authentication enabled");
+        if token.trim().len() < 16 {
+            print_warning(
+                "Remote debug token is shorter than 16 characters. Prefer at least 16 characters \
+                 and ideally a random 32-byte token."
+            );
+        }
     } else {
         print_info("Token authentication disabled");
     }
     if args.tls_cert.is_some() || args.tls_key.is_some() {
         print_info("TLS enabled");
+    } else if args.token.is_some() {
+        print_warning(
+            "Token authentication is enabled without TLS. Assume traffic is plaintext unless you \
+             are using a trusted private network or external TLS termination."
+        );
     }
 
     let server = crate::server::DebugServer::new(
