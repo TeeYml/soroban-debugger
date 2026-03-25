@@ -9,6 +9,8 @@ This guide focuses on two things:
 1. How the feature works.
 2. How to deploy it without making unsafe assumptions about tokens or transport security.
 
+> **Note: Remote client mode is CLI-only.** The `soroban-debug remote` command and TLS configuration are not available through the VS Code extension. The extension spawns and manages the debug server locally as a subprocess. If you need to debug against a remote server from VS Code, see the [VS Code Extension and Remote Mode](#vs-code-extension-and-remote-mode) section below. For a full breakdown of what each surface supports, see the [Feature Matrix](feature-matrix.md#remote-debugging).
+
 ## Architecture
 
 Remote debugging has three components:
