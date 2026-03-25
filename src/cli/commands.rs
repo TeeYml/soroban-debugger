@@ -1552,7 +1552,21 @@ pub fn server(args: ServerArgs) -> Result<()> {
 /// Connect to remote debug server
 pub fn remote(args: RemoteArgs, _verbosity: Verbosity) -> Result<()> {
     print_info(format!("Connecting to remote debugger at {}", args.remote));
-    let mut client = crate::client::RemoteClient::connect(&args.remote, args.token.clone())?;
+    let config = crate::client::remote_client::RemoteClientConfig {
+        timeouts: crate::client::remote_client::RequestTimeouts {
+            default: std::time::Duration::from_millis(args.timeout_ms),
+            ping: std::time::Duration::from_millis(args.ping_timeout_ms),
+            inspect: std::time::Duration::from_millis(args.inspect_timeout_ms),
+            get_storage: std::time::Duration::from_millis(args.storage_timeout_ms),
+        },
+        retry: crate::client::remote_client::RetryPolicy {
+            max_attempts: args.retry_attempts as usize,
+            base_delay: std::time::Duration::from_millis(args.retry_base_delay_ms),
+            max_delay: std::time::Duration::from_millis(args.retry_max_delay_ms),
+        },
+    };
+    let mut client =
+        crate::client::RemoteClient::connect_with_config(&args.remote, args.token.clone(), config)?;
 
     if let Some(contract) = &args.contract {
         print_info(format!("Loading contract: {:?}", contract));
