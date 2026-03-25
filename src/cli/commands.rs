@@ -1540,6 +1540,31 @@ pub fn profile(args: ProfileArgs) -> Result<()> {
         logging::log_display(format!("\n{}", markdown), logging::LogLevel::Info);
     }
 
+    // Export flame graph SVG if requested
+    if let Some(flamegraph_path) = &args.flamegraph {
+        let stacks = crate::profiler::FlameGraphGenerator::from_report(&report);
+        crate::profiler::FlameGraphGenerator::write_svg_file(
+            &stacks,
+            flamegraph_path,
+            args.flamegraph_width,
+            args.flamegraph_height,
+        )?;
+        logging::log_display(
+            format!("Flame graph SVG written to: {:?}", flamegraph_path),
+            logging::LogLevel::Info,
+        );
+    }
+
+    // Export collapsed stack format if requested
+    if let Some(stacks_path) = &args.flamegraph_stacks {
+        let stacks = crate::profiler::FlameGraphGenerator::from_report(&report);
+        crate::profiler::FlameGraphGenerator::write_collapsed_stack_file(&stacks, stacks_path)?;
+        logging::log_display(
+            format!("Collapsed stack format written to: {:?}", stacks_path),
+            logging::LogLevel::Info,
+        );
+    }
+
     Ok(())
 }
 

@@ -837,9 +837,26 @@ pub struct ProfileArgs {
     /// Initial storage state as JSON object
     #[arg(short, long)]
     pub storage: Option<String>,
+
     /// Expected SHA-256 hash of the WASM file. If provided, loading will fail if the computed hash does not match.
     #[arg(long)]
     pub expected_hash: Option<String>,
+
+    /// Export flame graph as SVG file
+    #[arg(long)]
+    pub flamegraph: Option<PathBuf>,
+
+    /// Export collapsed stack format (intermediate format for flame graph)
+    #[arg(long)]
+    pub flamegraph_stacks: Option<PathBuf>,
+
+    /// Width for flame graph SVG rendering in pixels
+    #[arg(long, default_value = "1200")]
+    pub flamegraph_width: usize,
+
+    /// Height for flame graph SVG rendering in pixels
+    #[arg(long, default_value = "800")]
+    pub flamegraph_height: usize,
 }
 
 #[derive(Parser)]
