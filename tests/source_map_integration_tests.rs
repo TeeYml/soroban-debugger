@@ -1,16 +1,11 @@
-use soroban_debugger::debugger::source_map::SourceMap;
+#[path = "fixtures/mod.rs"]
+mod fixtures;
 
-fn fixture_wasm(name: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join("wasm")
-        .join(format!("{name}.wasm"))
-}
+use soroban_debugger::debugger::source_map::SourceMap;
 
 #[test]
 fn source_map_missing_debug_info_is_graceful() {
-    let wasm = fixture_wasm("counter");
+    let wasm = fixtures::get_fixture_path(fixtures::names::COUNTER);
     if !wasm.exists() {
         eprintln!(
             "Skipping test: fixture not found at {}. Run tests/fixtures/build.sh to build fixtures.",
@@ -30,7 +25,14 @@ fn source_map_missing_debug_info_is_graceful() {
 
 #[test]
 fn source_map_debug_fixture_resolves_locations() {
-    let wasm = fixture_wasm("counter_debug");
+    let Some(wasm) = fixtures::try_artifact_path(fixtures::names::COUNTER, "debug") else {
+        eprintln!(
+            "Skipping test: debug artifact missing from {}. Run tests/fixtures/build.sh to generate debug fixtures.",
+            fixtures::manifest_path().display()
+        );
+        return;
+    };
+
     if !wasm.exists() {
         eprintln!(
             "Skipping test: debug fixture not found at {}. Run tests/fixtures/build.sh to generate *_debug.wasm fixtures.",
@@ -51,6 +53,5 @@ fn source_map_debug_fixture_resolves_locations() {
     let looked_up = sm.lookup(first_offset).expect("lookup should succeed");
     assert_eq!(&looked_up, first_loc);
 
-    // Range lookup should return the same location for nearby offsets.
     assert!(sm.lookup(first_offset.saturating_add(1)).is_some());
 }

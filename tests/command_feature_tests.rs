@@ -3,12 +3,11 @@ use predicates::prelude::*;
 use std::fs;
 use tempfile::NamedTempFile;
 
+#[path = "fixtures/mod.rs"]
+mod fixtures;
+
 fn fixture_wasm(name: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join("wasm")
-        .join(format!("{name}.wasm"))
+    fixtures::get_fixture_path(name)
 }
 
 fn base_cmd() -> Command {
