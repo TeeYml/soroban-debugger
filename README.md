@@ -781,6 +781,15 @@ To run the full benchmark suite:
 cargo bench
 ```
 
+To mirror the CI regression gate without switching your current checkout away from your branch, install `critcmp` and run:
+
+```bash
+cargo install critcmp --version 0.1.7
+bash scripts/check_benchmark_regressions.sh
+```
+
+The helper benchmarks your current tree, benchmarks `origin/main` in a temporary detached worktree when that ref is available, and compares the two saved Criterion baselines without mutating your working directory.
+
 ### Baseline Results (v0.1.0)
 
 | Component | Operation | Time (Baseline) |

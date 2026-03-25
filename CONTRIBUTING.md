@@ -121,6 +121,15 @@ Run a specific integration test file:
 cargo test --test <test_file>
 ```
 
+Reproduce the benchmark regression gate locally without checking out `main` in place:
+
+```bash
+cargo install critcmp --version 0.1.7
+bash scripts/check_benchmark_regressions.sh
+```
+
+The script benchmarks your current branch, then benchmarks `origin/main` in a temporary detached worktree when available so your checkout stays on your branch throughout the comparison.
+
 Tests should be:
 - Isolated and repeatable
 - Well-named and descriptive
@@ -275,6 +284,8 @@ git rebase upstream/main
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
+bash scripts/test_benchmark_regressions.sh
+bash scripts/check_benchmark_regressions.sh
 ```
 
 3. Push your branch and open a PR against `main`.
