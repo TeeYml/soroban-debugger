@@ -1,4 +1,4 @@
-import {
+﻿import {
   DebugSession,
   InitializedEvent,
   StoppedEvent,
@@ -19,6 +19,43 @@ import { ResolvedBreakpoint, resolveSourceBreakpoints } from './sourceBreakpoint
 import { LogOutputEvent, LogLevel } from '@vscode/debugadapter/lib/logger';
 import { LogManager, LogLevel as ManagerLogLevel, LogPhase } from '../debug/logManager';
 
+
+
+/** Structured error types from the runtime */
+interface TimeoutError {
+  type: 'timeout';
+  elapsed_ms: number;
+  limit_ms: number;
+}
+
+interface CancellationError {
+  type: 'cancelled';
+  reason: string;
+}
+
+type StructuredRuntimeError = TimeoutError | CancellationError | { type: 'other'; message: string };
+
+function parseRuntimeError(error: unknown): StructuredRuntimeError {
+  if (typeof error === 'object' && error !== null) {
+    const err = error as Record<string, unknown>;
+    if (err.type === 'timeout' || err.Timeout) {
+      const timeout = (err.Timeout as Record<string, number>) ?? err;
+      return {
+        type: 'timeout',
+        elapsed_ms: timeout.elapsed_ms ?? 0,
+        limit_ms: timeout.limit_ms ?? 0,
+      };
+    }
+    if (err.type === 'cancelled' || err.Cancelled) {
+      const cancelled = (err.Cancelled as Record<string, string>) ?? err;
+      return {
+        type: 'cancelled',
+        reason: cancelled.reason ?? 'unknown',
+      };
+    }
+  }
+  return { type: 'other', message: String(error) };
+}
 type LaunchRequestArgs = DebugProtocol.LaunchRequestArguments & DebuggerProcessConfig;
 
 export class SorobanDebugSession extends DebugSession {
@@ -762,5 +799,16 @@ export class SorobanDebugSession extends DebugSession {
     }
 
     return notices.length > 0 ? notices.join(' ') : undefined;
+  }
+}
+
+function formatDapError(error: StructuredRuntimeError): string {
+  switch (error.type) {
+    case 'timeout':
+      return `Execution timed out after ${error.elapsed_ms}ms (limit: ${error.limit_ms}ms). Consider increasing the timeout in your launch configuration.`;
+    case 'cancelled':
+      return `Execution cancelled: ${error.reason}`;
+    case 'other':
+      return error.message;
   }
 }
