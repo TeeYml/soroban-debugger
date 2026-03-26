@@ -1,4 +1,440 @@
 use crate::config::Config;
+use clap::{Parser, Subcommand};
+use clap_complete::Shell;
+use std::path::PathBuf;
+
+/// Verbosity level for output control
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verbosity {
+    Quiet,
+    Normal,
+    Verbose,
+}
+
+impl Verbosity {
+    /// Convert verbosity to log level string for RUST_LOG
+    pub fn to_log_level(self) -> String {
+        match self {
+            Verbosity::Quiet => "error".to_string(),
+            Verbosity::Normal => "info".to_string(),
+            Verbosity::Verbose => "debug".to_string(),
+        }
+    }
+}
+
+#[derive(Parser)]
+#[command(name = "soroban-debug")]
+#[command(about = "A debugger for Soroban smart contracts", long_about = None)]
+#[command(version)]
+pub struct Cli {
+    /// Suppress non-essential output (errors and return value only)
+    #[arg(short, long, global = true)]
+    pub quiet: bool,
+
+    /// Show verbose output including internal details
+    #[arg(short, long, global = true)]
+    pub verbose: bool,
+
+    /// Show historical budget trend visualization
+    #[arg(long)]
+    pub budget_trend: bool,
+
+    /// Filter budget trend by contract hash
+    #[arg(long)]
+    pub trend_contract: Option<String>,
+
+    /// Filter budget trend by function name
+    #[arg(long)]
+    pub trend_function: Option<String>,
+
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+
+    /// Show detailed version information
+    #[arg(long)]
+    pub version_verbose: bool,
+
+    /// Show exported functions for a given contract (shorthand for inspect --functions)
+    #[arg(long)]
+    pub list_functions: Option<PathBuf>,
+}
+impl Cli {
+    /// Get the effective verbosity level
+    pub fn verbosity(&self) -> Verbosity {
+        if self.quiet {
+            Verbosity::Quiet
+        } else if self.verbose {
+            Verbosity::Verbose
+        } else {
+            Verbosity::Normal
+        }
+    }
+}
+
+#[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
+pub enum Commands {
+    /// Run a contract function with the debugger
+    Run(RunArgs),
+
+    /// Start an interactive debugging session
+    Interactive(InteractiveArgs),
+
+    /// Start an interactive REPL for contract exploration
+    Repl(ReplArgs),
+
+    /// Launch the full-screen TUI dashboard
+    Tui(TuiArgs),
+
+    /// Inspect contract information without executing
+    Inspect(InspectArgs),
+
+    /// Generate shell completion scripts
+    Completions(CompletionsArgs),
+    /// Analyze contract and generate gas optimization suggestions
+    Optimize(OptimizeArgs),
+
+    /// Profile a single function execution and print hotspots + suggestions
+    Profile(ProfileArgs),
+    /// Check compatibility between two contract versions
+    UpgradeCheck(UpgradeCheckArgs),
+
+    /// Compare two execution trace JSON files side-by-side
+    Compare(CompareArgs),
+
+    /// Replay execution from a previously exported trace file
+    Replay(ReplayArgs),
+
+    /// Run symbolic execution to explore contract input space
+    Symbolic(SymbolicArgs),
+
+    /// Start debug server for remote connections
+    Server(ServerArgs),
+
+    /// Connect to remote debug server
+    Remote(RemoteArgs),
+
+    /// Analyze contract for security vulnerabilities
+    Analyze(AnalyzeArgs),
+}
+
+#[derive(Parser)]
+pub struct RunArgs {
+    /// Path to the contract WASM file
+    #[arg(short, long)]
+    pub contract: PathBuf,
+
+    /// Deprecated: use --contract instead
+    #[arg(long, hide = true, alias = "wasm", alias = "contract-path")]
+    pub wasm: Option<PathBuf>,
+
+    /// Function name to execute
+    #[arg(short, long)]
+    pub function: String,
+
+    /// Function arguments as JSON array (e.g., '["arg1", "arg2"]')
+    #[arg(short, long)]
+    pub args: Option<String>,
+
+    /// Initial storage state as JSON object
+    #[arg(short, long)]
+    pub storage: Option<String>,
+
+    /// Set breakpoint at function name
+    #[arg(short, long)]
+    pub breakpoint: Vec<String>,
+
+    /// Network snapshot file to load before execution
+    #[arg(long)]
+    pub network_snapshot: Option<PathBuf>,
+
+    /// Deprecated: use --network-snapshot instead
+    #[arg(long, hide = true, alias = "snapshot")]
+    pub snapshot: Option<PathBuf>,
+
+    /// Enable verbose output
+    #[arg(short, long)]
+    pub verbose: bool,
+
+    /// Output format (text, json)
+    #[arg(long)]
+    pub format: Option<String>,
+
+    /// Show contract events emitted during execution
+    #[arg(long)]
+    pub show_events: bool,
+
+    /// Show authorization tree during execution
+    #[arg(long)]
+    pub show_auth: bool,
+
+    /// Output format as JSON
+    #[arg(long)]
+    pub json: bool,
+
+    /// Filter events by topic
+    #[arg(long)]
+    pub filter_topic: Option<String>,
+
+    /// Execute the contract call N times for stress testing
+    #[arg(long)]
+    pub repeat: Option<u32>,
+
+    /// Mock cross-contract return: CONTRACT_ID.function=return_value (repeatable)
+    #[arg(long, value_name = "CONTRACT_ID.function=return_value")]
+    pub mock: Vec<String>,
+
+    /// Filter storage output by key pattern (repeatable). Supports:
+    ///   prefix*       — match keys starting with prefix
+    ///   re:<regex>    — match keys by regex
+    ///   exact_key     — match key exactly
+    #[arg(long, value_name = "PATTERN")]
+    pub storage_filter: Vec<String>,
+
+    /// Enable instruction-level debugging
+    #[arg(long)]
+    pub instruction_debug: bool,
+
+    /// Start with instruction stepping enabled
+    #[arg(long)]
+    pub step_instructions: bool,
+
+    /// Step mode for instruction debugging (into, over, out, block)
+    #[arg(long, default_value = "into")]
+    pub step_mode: String,
+    /// Execute contract in dry-run mode: simulate execution without persisting storage changes
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Export storage state to JSON file after execution
+    #[arg(long)]
+    pub export_storage: Option<PathBuf>,
+
+    /// Import storage state from JSON file before execution
+    #[arg(long)]
+    pub import_storage: Option<PathBuf>,
+
+    /// Path to JSON file containing array of argument sets for batch execution
+    #[arg(long)]
+    pub batch_args: Option<PathBuf>,
+
+    /// Automatically generate a unit test file from the execution trace
+    #[arg(long, value_name = "FILE")]
+    pub generate_test: Option<PathBuf>,
+
+    /// Overwrite the test file if it already exists (default: append)
+    #[arg(long)]
+    pub overwrite: bool,
+
+    /// Execution timeout in seconds (default: 30)
+    #[arg(long, default_value = "30")]
+    pub timeout: u64,
+
+    /// Trigger a prominent alert when a critical storage key is modified (repeatable)
+    #[arg(long, value_name = "KEY_PATTERN")]
+    pub alert_on_change: Vec<String>,
+
+    /// Expected SHA-256 hash of the WASM file. If provided, loading will fail if the computed hash does not match.
+    #[arg(long)]
+    pub expected_hash: Option<String>,
+
+    /// Show ledger entries accessed during execution
+    #[arg(long)]
+    pub show_ledger: bool,
+
+    /// TTL warning threshold in ledger sequence numbers (default: 1000)
+    #[arg(long, default_value = "1000")]
+    pub ttl_warning_threshold: u32,
+}
+
+impl RunArgs {
+    pub fn merge_config(&mut self, config: &Config) {
+        // Breakpoints
+        if self.breakpoint.is_empty() && !config.debug.breakpoints.is_empty() {
+            self.breakpoint = config.debug.breakpoints.clone();
+        }
+
+        // Show events
+        if !self.show_events {
+            if let Some(show) = config.output.show_events {
+                self.show_events = show;
+            }
+        }
+
+        // Output Format
+        if self.format.is_none() {
+            self.format = config.output.format.clone();
+        }
+
+        // Verbosity: if config has a level > 0 and CLI verbose is false, enable it
+        if !self.verbose {
+            if let Some(level) = config.debug.verbosity {
+                if level > 0 {
+                    self.verbose = true;
+                }
+            }
+        }
+    }
+}
+
+#[derive(Parser)]
+pub struct InteractiveArgs {
+    /// Path to the contract WASM file
+    #[arg(short, long)]
+    pub contract: PathBuf,
+
+    /// Deprecated: use --contract instead
+    #[arg(long, hide = true, alias = "wasm", alias = "contract-path")]
+    pub wasm: Option<PathBuf>,
+
+    /// Network snapshot file to load before starting interactive session
+    #[arg(long)]
+    pub network_snapshot: Option<PathBuf>,
+
+    /// Deprecated: use --network-snapshot instead
+    #[arg(long, hide = true, alias = "snapshot")]
+    pub snapshot: Option<PathBuf>,
+
+    /// Expected SHA-256 hash of the WASM file. If provided, loading will fail if the computed hash does not match.
+    #[arg(long)]
+    pub expected_hash: Option<String>,
+}
+
+impl InteractiveArgs {
+    pub fn merge_config(&mut self, _config: &Config) {
+        // Future interactive-specific config could go here
+    }
+}
+
+#[derive(Parser)]
+pub struct ReplArgs {
+    /// Path to the contract WASM file
+    #[arg(short, long)]
+    pub contract: PathBuf,
+
+    /// Deprecated: use --contract instead
+    #[arg(long, hide = true, alias = "wasm", alias = "contract-path")]
+    pub wasm: Option<PathBuf>,
+
+    /// Network snapshot file to load before starting REPL session
+    #[arg(long)]
+    pub network_snapshot: Option<PathBuf>,
+
+    /// Deprecated: use --network-snapshot instead
+    #[arg(long, hide = true, alias = "snapshot")]
+    pub snapshot: Option<PathBuf>,
+
+    /// Initial storage state as JSON object
+    #[arg(short, long)]
+    pub storage: Option<String>,
+
+    /// Expected SHA-256 hash of the WASM file. If provided, loading will fail if the computed hash does not match.
+    #[arg(long)]
+    pub expected_hash: Option<String>,
+}
+
+impl ReplArgs {
+    pub fn merge_config(&mut self, _config: &Config) {
+        // Future REPL-specific config could go here
+    }
+}
+
+#[derive(Parser)]
+pub struct CompletionsArgs {
+    /// Shell to generate completion script for
+    #[arg(value_enum)]
+    pub shell: Shell,
+}
+#[derive(Parser)]
+pub struct InspectArgs {
+    /// Path to the contract WASM file
+    #[arg(short, long)]
+    pub contract: PathBuf,
+
+    /// Deprecated: use --contract instead
+    #[arg(long, hide = true, alias = "wasm", alias = "contract-path")]
+    pub wasm: Option<PathBuf>,
+
+    /// Show exported functions
+    #[arg(long)]
+    pub functions: bool,
+
+    /// Show contract metadata
+    #[arg(long)]
+    pub metadata: bool,
+
+    /// Expected SHA-256 hash of the WASM file. If provided, loading will fail if the computed hash does not match.
+    #[arg(long)]
+    pub expected_hash: Option<String>,
+
+    /// Show cross-contract dependency graph in DOT and Mermaid formats
+    #[arg(long)]
+    pub dependency_graph: bool,
+}
+
+#[derive(Parser)]
+pub struct OptimizeArgs {
+    /// Path to the contract WASM file
+    #[arg(short, long)]
+    pub contract: PathBuf,
+
+    /// Deprecated: use --contract instead
+    #[arg(long, hide = true, alias = "wasm", alias = "contract-path")]
+    pub wasm: Option<PathBuf>,
+
+    /// Function name to analyze (can be specified multiple times)
+    #[arg(short, long)]
+    pub function: Vec<String>,
+
+    /// Function arguments as JSON array (e.g., '["arg1", "arg2"]')
+    #[arg(short, long)]
+    pub args: Option<String>,
+
+    /// Output file for the optimization report (default: stdout)
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
+
+    /// Initial storage state as JSON object
+    #[arg(short, long)]
+    pub storage: Option<String>,
+
+    /// Network snapshot file to load before analysis
+    #[arg(long)]
+    pub network_snapshot: Option<PathBuf>,
+
+    /// Expected SHA-256 hash of the WASM file. If provided, loading will fail if the computed hash does not match.
+    #[arg(long)]
+    pub expected_hash: Option<String>,
+
+    /// Deprecated: use --network-snapshot instead
+    #[arg(long, hide = true, alias = "snapshot")]
+    pub snapshot: Option<PathBuf>,
+}
+
+#[derive(Parser)]
+pub struct UpgradeCheckArgs {
+    /// Path to the old contract WASM file
+    #[arg(short, long)]
+    pub old: PathBuf,
+
+    /// Path to the new contract WASM file
+    #[arg(short, long)]
+    pub new: PathBuf,
+
+    /// Function name to test side-by-side (optional)
+    #[arg(short, long)]
+    pub function: Option<String>,
+
+    /// Function arguments as JSON array for side-by-side test
+    #[arg(short, long)]
+    pub args: Option<String>,
+
+    /// Output file for the compatibility report (default: stdout)
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+}
+
+use crate::config::Config;
 use clap::{Parser, Subcommand, ValueEnum};
 
 use clap_complete::Shell;
@@ -67,16 +503,6 @@ impl Verbosity {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Shared timeout constant — single source of truth for all commands
-// ---------------------------------------------------------------------------
-
-/// Default execution timeout in seconds, applied uniformly across all
-/// commands that accept `--timeout`.
-pub const DEFAULT_TIMEOUT_SECS: u64 = 30;
-
-// ---------------------------------------------------------------------------
-
 #[derive(Parser)]
 #[command(name = "soroban-debug")]
 #[command(about = "A debugger for Soroban smart contracts", long_about = None)]
@@ -105,31 +531,6 @@ pub struct Cli {
     )]
     pub history_file: Option<PathBuf>,
 
-    /// Maximum number of history records to retain.
-    ///
-    /// When set, the oldest records are dropped after each appended run so the
-    /// file never exceeds N entries.  Equivalent to setting
-    /// `SOROBAN_DEBUG_HISTORY_MAX_RECORDS`.
-    #[arg(
-        long,
-        global = true,
-        env = "SOROBAN_DEBUG_HISTORY_MAX_RECORDS",
-        value_name = "N"
-    )]
-    pub history_max_records: Option<usize>,
-
-    /// Drop history records older than N days.
-    ///
-    /// Applied on every append and when running `history prune`.  Equivalent
-    /// to setting `SOROBAN_DEBUG_HISTORY_MAX_AGE_DAYS`.
-    #[arg(
-        long,
-        global = true,
-        env = "SOROBAN_DEBUG_HISTORY_MAX_AGE_DAYS",
-        value_name = "DAYS"
-    )]
-    pub history_max_age_days: Option<u64>,
-
     /// Show historical budget trend visualization
     #[arg(long)]
     pub budget_trend: bool,
@@ -143,15 +544,15 @@ pub struct Cli {
     pub trend_function: Option<String>,
 
     /// Regression threshold percentage for `--budget-trend` warnings
-    #[arg(long, default_value_t = 10.0, value_name = "PCT")]
+    #[arg(long, default_value_t = 10.0, value_name = "PCT", value_parser = clap::value_parser!(f64).range(0.0..))]
     pub trend_regression_threshold_pct: f64,
 
     /// Lookback window (number of runs) for `--budget-trend` regression detection
-    #[arg(long, default_value_t = 2, value_name = "N")]
+    #[arg(long, default_value_t = 2, value_name = "N", value_parser = clap::value_parser!(usize).range(2..))]
     pub trend_regression_lookback: usize,
 
     /// Smoothing window (moving average) for `--budget-trend` regression detection (1 disables smoothing)
-    #[arg(long, default_value_t = 1, value_name = "N")]
+    #[arg(long, default_value_t = 1, value_name = "N", value_parser = clap::value_parser!(usize).range(1..))]
     pub trend_regression_smoothing: usize,
 
     #[command(subcommand)]
@@ -229,9 +630,6 @@ pub enum Commands {
     /// Run a multi-step scenario from a TOML file
     Scenario(ScenarioArgs),
 
-    /// Prune or compact run history according to a retention policy
-    HistoryPrune(HistoryPruneArgs),
-
     /// Plugin-provided subcommand (loaded at runtime)
     #[command(external_subcommand)]
     External(Vec<String>),
@@ -240,7 +638,7 @@ pub enum Commands {
 #[derive(Parser)]
 pub struct RunArgs {
     /// Path to the contract WASM file
-    #[arg(short, long, required_unless_present_any = ["server", "remote"])]
+    #[arg(short, long, required_unless_present = "server")]
     pub contract: Option<PathBuf>,
 
     /// Deprecated: use --contract instead
@@ -248,7 +646,7 @@ pub struct RunArgs {
     pub wasm: Option<PathBuf>,
 
     /// Function name to execute
-    #[arg(short, long, required_unless_present_any = ["server", "remote"])]
+    #[arg(short, long, required_unless_present = "server")]
     pub function: Option<String>,
 
     /// Function arguments as JSON array (e.g., '["arg1", "arg2"]')
@@ -377,10 +775,8 @@ pub struct RunArgs {
     #[arg(long)]
     pub overwrite: bool,
 
-    /// Maximum time allowed for contract execution, in seconds.
-    /// The command exits with a non-zero status code if this limit is exceeded.
-    /// Use 0 to disable the timeout.
-    #[arg(long, default_value_t = DEFAULT_TIMEOUT_SECS, value_name = "SECONDS")]
+    /// Execution timeout in seconds (default: 30)
+    #[arg(long, default_value = "30")]
     pub timeout: u64,
 
     /// Trigger a prominent alert when a critical storage key is modified (repeatable)
@@ -493,10 +889,8 @@ pub struct InteractiveArgs {
     #[arg(long, value_name = "CONTRACT_ID.function=return_value")]
     pub mock: Vec<String>,
 
-    /// Maximum time allowed for contract execution, in seconds.
-    /// The command exits with a non-zero status code if this limit is exceeded.
-    /// Use 0 to disable the timeout.
-    #[arg(long, default_value_t = DEFAULT_TIMEOUT_SECS, value_name = "SECONDS")]
+    /// Execution timeout in seconds (default: 30)
+    #[arg(long, default_value = "30")]
     pub timeout: u64,
 
     /// Enable instruction-level debugging
@@ -580,10 +974,6 @@ pub struct InspectArgs {
     #[arg(long)]
     pub metadata: bool,
 
-    /// Output format: pretty (default) or json
-    #[arg(long, value_enum, default_value = "pretty")]
-    pub format: OutputFormat,
-
     /// Expected SHA-256 hash of the WASM file. If provided, loading will fail if the computed hash does not match.
     #[arg(long)]
     pub expected_hash: Option<String>,
@@ -658,10 +1048,8 @@ pub struct OptimizeArgs {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Commands, OutputFormat, SymbolicProfile, DEFAULT_TIMEOUT_SECS};
+    use super::{Cli, Commands, OutputFormat, SymbolicProfile};
     use clap::Parser;
-
-    // ── output format tests (unchanged) ────────────────────────────────────
 
     #[test]
     fn run_output_defaults_to_pretty() {
@@ -815,178 +1203,6 @@ mod tests {
         assert_eq!(args.path_cap, Some(200));
         assert_eq!(args.timeout, Some(45));
     }
-
-    // ── timeout consistency tests (new) ────────────────────────────────────
-
-    /// run uses the shared default when --timeout is not supplied
-    #[test]
-    fn run_timeout_defaults_to_constant() {
-        let cli = Cli::parse_from([
-            "soroban-debug",
-            "run",
-            "--contract",
-            "contract.wasm",
-            "--function",
-            "increment",
-        ]);
-        let Commands::Run(args) = cli.command.unwrap() else {
-            panic!("run expected");
-        };
-        assert_eq!(args.timeout, DEFAULT_TIMEOUT_SECS);
-    }
-
-    /// run accepts an explicit --timeout value
-    #[test]
-    fn run_timeout_accepts_explicit_value() {
-        let cli = Cli::parse_from([
-            "soroban-debug",
-            "run",
-            "--contract",
-            "contract.wasm",
-            "--function",
-            "increment",
-            "--timeout",
-            "60",
-        ]);
-        let Commands::Run(args) = cli.command.unwrap() else {
-            panic!("run expected");
-        };
-        assert_eq!(args.timeout, 60);
-    }
-
-    /// run accepts --timeout 0 to disable the timeout
-    #[test]
-    fn run_timeout_zero_disables_timeout() {
-        let cli = Cli::parse_from([
-            "soroban-debug",
-            "run",
-            "--contract",
-            "contract.wasm",
-            "--function",
-            "increment",
-            "--timeout",
-            "0",
-        ]);
-        let Commands::Run(args) = cli.command.unwrap() else {
-            panic!("run expected");
-        };
-        assert_eq!(args.timeout, 0);
-    }
-
-    /// interactive uses the shared default
-    #[test]
-    fn interactive_timeout_defaults_to_constant() {
-        let cli = Cli::parse_from([
-            "soroban-debug",
-            "interactive",
-            "--contract",
-            "contract.wasm",
-            "--function",
-            "increment",
-        ]);
-        let Commands::Interactive(args) = cli.command.unwrap() else {
-            panic!("interactive expected");
-        };
-        assert_eq!(args.timeout, DEFAULT_TIMEOUT_SECS);
-    }
-
-    /// interactive accepts an explicit --timeout value
-    #[test]
-    fn interactive_timeout_accepts_explicit_value() {
-        let cli = Cli::parse_from([
-            "soroban-debug",
-            "interactive",
-            "--contract",
-            "contract.wasm",
-            "--function",
-            "increment",
-            "--timeout",
-            "120",
-        ]);
-        let Commands::Interactive(args) = cli.command.unwrap() else {
-            panic!("interactive expected");
-        };
-        assert_eq!(args.timeout, 120);
-    }
-
-    /// analyze uses the shared default
-    #[test]
-    fn analyze_timeout_defaults_to_constant() {
-        let cli = Cli::parse_from([
-            "soroban-debug",
-            "analyze",
-            "--contract",
-            "contract.wasm",
-        ]);
-        let Commands::Analyze(args) = cli.command.unwrap() else {
-            panic!("analyze expected");
-        };
-        assert_eq!(args.timeout, DEFAULT_TIMEOUT_SECS);
-    }
-
-    /// analyze accepts an explicit --timeout value
-    #[test]
-    fn analyze_timeout_accepts_explicit_value() {
-        let cli = Cli::parse_from([
-            "soroban-debug",
-            "analyze",
-            "--contract",
-            "contract.wasm",
-            "--timeout",
-            "90",
-        ]);
-        let Commands::Analyze(args) = cli.command.unwrap() else {
-            panic!("analyze expected");
-        };
-        assert_eq!(args.timeout, 90);
-    }
-
-    /// profile now has --timeout and uses the shared default
-    #[test]
-    fn profile_timeout_defaults_to_constant() {
-        let cli = Cli::parse_from([
-            "soroban-debug",
-            "profile",
-            "--contract",
-            "contract.wasm",
-            "--function",
-            "increment",
-        ]);
-        let Commands::Profile(args) = cli.command.unwrap() else {
-            panic!("profile expected");
-        };
-        assert_eq!(args.timeout, DEFAULT_TIMEOUT_SECS);
-    }
-
-        assert!(
-            result.is_err(),
-            "--seed and --replay should be mutually exclusive"
-        );
-    }
-
-    /// symbolic still uses Option<u64> — None means "use profile budget"
-    #[test]
-    fn symbolic_timeout_none_by_default() {
-        let cli = Cli::parse_from([
-            "soroban-debug",
-            "symbolic",
-            "--contract",
-            "contract.wasm",
-            "--function",
-            "increment",
-        ]);
-        let Commands::Symbolic(args) = cli.command.unwrap() else {
-            panic!("symbolic expected");
-        };
-        // symbolic is intentionally Option — no default, controlled by profile
-        assert_eq!(args.timeout, None);
-    }
-
-    /// All commands that use u64 timeout share the same DEFAULT_TIMEOUT_SECS value
-    #[test]
-    fn default_timeout_constant_is_30() {
-        assert_eq!(DEFAULT_TIMEOUT_SECS, 30);
-    }
 }
 
 #[derive(Parser)]
@@ -1003,9 +1219,15 @@ pub struct CompareArgs {
     #[arg(short, long)]
     pub output: Option<PathBuf>,
 
-    /// Number of context lines to show around the first divergence
-    #[arg(short = 'C', long, default_value_t = 3)]
-    pub context: usize,
+    /// Ignore a JSON path during comparison. Repeatable. Paths are slash-delimited,
+    /// for example: /storage/fee_pool or /return_value/meta/timestamp
+    #[arg(long, value_name = "PATH")]
+    pub ignore_path: Vec<String>,
+
+    /// Ignore an object field name anywhere in the trace during comparison.
+    /// Repeatable. Useful for timestamps, sequence numbers, and similar metadata.
+    #[arg(long, value_name = "FIELD")]
+    pub ignore_field: Vec<String>,
 }
 
 /// Arguments for the TUI dashboard subcommand
@@ -1061,16 +1283,9 @@ pub struct ProfileArgs {
     /// Initial storage state as JSON object
     #[arg(short, long)]
     pub storage: Option<String>,
-
     /// Expected SHA-256 hash of the WASM file. If provided, loading will fail if the computed hash does not match.
     #[arg(long)]
     pub expected_hash: Option<String>,
-
-    /// Maximum time allowed for contract execution, in seconds.
-    /// The command exits with a non-zero status code if this limit is exceeded.
-    /// Use 0 to disable the timeout.
-    #[arg(long, default_value_t = DEFAULT_TIMEOUT_SECS, value_name = "SECONDS")]
-    pub timeout: u64,
 }
 
 #[derive(Parser)]
@@ -1147,10 +1362,6 @@ pub struct ReplayArgs {
     /// Show verbose output during replay
     #[arg(short, long)]
     pub verbose: bool,
-
-    /// Number of context lines to show for divergence (default: 3)
-    #[arg(short = 'C', long, default_value_t = 3)]
-    pub context: usize,
 }
 
 #[derive(Parser)]
@@ -1193,34 +1404,6 @@ pub struct RemoteArgs {
     /// Function arguments as JSON array
     #[arg(short, long)]
     pub args: Option<String>,
-
-    /// Default request timeout in milliseconds (applies when no per-request override is set)
-    #[arg(long, default_value = "30000")]
-    pub timeout_ms: u64,
-
-    /// Ping request timeout in milliseconds
-    #[arg(long, default_value = "2000")]
-    pub ping_timeout_ms: u64,
-
-    /// Inspect request timeout in milliseconds
-    #[arg(long, default_value = "5000")]
-    pub inspect_timeout_ms: u64,
-
-    /// GetStorage request timeout in milliseconds
-    #[arg(long, default_value = "10000")]
-    pub storage_timeout_ms: u64,
-
-    /// Retry attempts for idempotent operations (Ping/Inspect/GetStorage/etc.)
-    #[arg(long, default_value = "3")]
-    pub retry_attempts: u32,
-
-    /// Base backoff delay in milliseconds for retries
-    #[arg(long, default_value = "200")]
-    pub retry_base_delay_ms: u64,
-
-    /// Maximum backoff delay in milliseconds for retries
-    #[arg(long, default_value = "2000")]
-    pub retry_max_delay_ms: u64,
 }
 
 #[derive(Parser)]
@@ -1241,27 +1424,13 @@ pub struct AnalyzeArgs {
     #[arg(short, long)]
     pub storage: Option<String>,
 
-    /// Maximum time allowed for dynamic analysis, in seconds.
-    /// The command exits with a non-zero status code if this limit is exceeded.
-    /// Use 0 to disable the timeout.
-    #[arg(long, default_value_t = DEFAULT_TIMEOUT_SECS, value_name = "SECONDS")]
+    /// Execution timeout in seconds for dynamic analysis (default: 30)
+    #[arg(long, default_value = "30")]
     pub timeout: u64,
 
     /// Output format (text, json)
     #[arg(long, default_value = "text")]
     pub format: String,
-
-    /// Filter rules to enable (can be specified multiple times)
-    #[arg(long, value_name = "RULE_ID")]
-    pub enable_rule: Vec<String>,
-
-    /// Filter rules to disable (can be specified multiple times)
-    #[arg(long, value_name = "RULE_ID")]
-    pub disable_rule: Vec<String>,
-
-    /// Minimum finding severity to report (low, medium, high)
-    #[arg(long, default_value = "low")]
-    pub min_severity: String,
 }
 
 #[derive(Parser)]

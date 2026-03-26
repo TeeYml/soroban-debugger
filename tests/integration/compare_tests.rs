@@ -5,6 +5,7 @@
 //! comparison engine, and verifying the report output.
 
 use soroban_debugger::compare::{CompareEngine, ExecutionTrace};
+use soroban_debugger::compare::engine::CompareFilters;
 use std::io::Write;
 use tempfile::NamedTempFile;
 
@@ -97,7 +98,7 @@ fn test_compare_pipeline_storage_diff() {
     let a = ExecutionTrace::from_file(fa.path()).unwrap();
     let b = ExecutionTrace::from_file(fb.path()).unwrap();
 
-    let report = CompareEngine::compare(&a, &b, 1);
+    let report = CompareEngine::compare(&a, &b);
 
     // fee_pool is only in B
     assert!(report.storage_diff.only_in_b.contains_key("fee_pool"));
@@ -115,7 +116,7 @@ fn test_compare_pipeline_budget_delta() {
     let a = ExecutionTrace::from_file(fa.path()).unwrap();
     let b = ExecutionTrace::from_file(fb.path()).unwrap();
 
-    let report = CompareEngine::compare(&a, &b, 1);
+    let report = CompareEngine::compare(&a, &b);
 
     assert_eq!(report.budget_diff.cpu_delta, Some(-7000));
     assert_eq!(report.budget_diff.memory_delta, Some(-1360));
@@ -129,7 +130,7 @@ fn test_compare_pipeline_return_value_mismatch() {
     let a = ExecutionTrace::from_file(fa.path()).unwrap();
     let b = ExecutionTrace::from_file(fb.path()).unwrap();
 
-    let report = CompareEngine::compare(&a, &b, 1);
+    let report = CompareEngine::compare(&a, &b);
     assert!(!report.return_value_diff.equal);
 }
 
@@ -141,7 +142,7 @@ fn test_compare_pipeline_flow_diff() {
     let a = ExecutionTrace::from_file(fa.path()).unwrap();
     let b = ExecutionTrace::from_file(fb.path()).unwrap();
 
-    let report = CompareEngine::compare(&a, &b, 1);
+    let report = CompareEngine::compare(&a, &b);
     assert!(!report.flow_diff.identical);
 }
 
@@ -153,7 +154,7 @@ fn test_compare_pipeline_event_diff() {
     let a = ExecutionTrace::from_file(fa.path()).unwrap();
     let b = ExecutionTrace::from_file(fb.path()).unwrap();
 
-    let report = CompareEngine::compare(&a, &b, 1);
+    let report = CompareEngine::compare(&a, &b);
     assert!(!report.event_diff.identical);
 }
 
@@ -165,7 +166,7 @@ fn test_compare_identical_traces() {
     let a = ExecutionTrace::from_file(fa.path()).unwrap();
     let b = ExecutionTrace::from_file(fb.path()).unwrap();
 
-    let report = CompareEngine::compare(&a, &b, 1);
+    let report = CompareEngine::compare(&a, &b);
 
     assert!(report.storage_diff.only_in_a.is_empty());
     assert!(report.storage_diff.only_in_b.is_empty());
@@ -183,7 +184,7 @@ fn test_render_report_contains_sections() {
     let a = ExecutionTrace::from_file(fa.path()).unwrap();
     let b = ExecutionTrace::from_file(fb.path()).unwrap();
 
-    let report = CompareEngine::compare(&a, &b, 1);
+    let report = CompareEngine::compare(&a, &b);
     let text = CompareEngine::render_report(&report);
 
     assert!(text.contains("Storage Changes"));
@@ -206,7 +207,7 @@ fn test_compare_empty_traces() {
     let a = ExecutionTrace::from_file(fa.path()).unwrap();
     let b = ExecutionTrace::from_file(fb.path()).unwrap();
 
-    let report = CompareEngine::compare(&a, &b, 1);
+    let report = CompareEngine::compare(&a, &b);
 
     assert!(report.storage_diff.only_in_a.is_empty());
     assert!(report.storage_diff.only_in_b.is_empty());
@@ -214,4 +215,43 @@ fn test_compare_empty_traces() {
     assert!(report.flow_diff.identical);
     assert!(report.event_diff.identical);
     assert!(report.budget_diff.cpu_delta.is_none());
+}
+
+#[test]
+fn test_compare_pipeline_ignore_path_and_field_filters() {
+    let fa = write_trace(
+        r#"{
+  "label": "baseline",
+  "storage": {
+    "balance:Alice": { "amount": 900, "timestamp": 1 },
+    "ledger_seq": 100
+  },
+  "return_value": { "status": "ok", "timestamp": 1 }
+}"#,
+    );
+    let fb = write_trace(
+        r#"{
+  "label": "candidate",
+  "storage": {
+    "balance:Alice": { "amount": 900, "timestamp": 2 },
+    "ledger_seq": 101
+  },
+  "return_value": { "status": "ok", "timestamp": 2 }
+}"#,
+    );
+
+    let a = ExecutionTrace::from_file(fa.path()).unwrap();
+    let b = ExecutionTrace::from_file(fb.path()).unwrap();
+    let filters = CompareFilters::new(
+        vec!["/storage/ledger_seq".to_string()],
+        vec!["timestamp".to_string()],
+    )
+    .unwrap();
+
+    let report = CompareEngine::compare_with_filters(&a, &b, &filters);
+
+    assert!(report.storage_diff.modified.is_empty());
+    assert!(report.storage_diff.only_in_a.is_empty());
+    assert!(report.storage_diff.only_in_b.is_empty());
+    assert!(report.return_value_diff.equal);
 }
