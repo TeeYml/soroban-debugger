@@ -462,10 +462,15 @@ export async function runSmokeSuite(): Promise<void> {
   );
   assert.equal(
     resolvedBreakpoints[0].verified,
-    true,
-    "Expected echo breakpoint to resolve",
+    false,
+    "Expected heuristic source mapping to be unverified",
   );
   assert.equal(resolvedBreakpoints[0].functionName, "echo");
+  assert.equal(
+    resolvedBreakpoints[0].setBreakpoint,
+    true,
+    "Expected heuristic mapping to still set a function breakpoint",
+  );
 
   await debuggerProcess.setBreakpoint({
     id: "echo",
