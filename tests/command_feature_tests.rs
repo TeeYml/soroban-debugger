@@ -191,6 +191,48 @@ expected_return = "I64(1)"
 }
 
 #[test]
+fn scenario_accepts_timeout_defaults_and_step_overrides() {
+    let wasm = fixture_wasm("counter");
+    let scenario = NamedTempFile::new().unwrap();
+    fs::write(
+        scenario.path(),
+        r#"
+[defaults]
+timeout_secs = 15
+
+[[steps]]
+name = "Increment"
+function = "increment"
+args = "[]"
+timeout_secs = 0
+expected_return = "I64(1)"
+
+[[steps]]
+name = "Read Counter"
+function = "get"
+expected_return = "I64(1)"
+"#,
+    )
+    .unwrap();
+
+    base_cmd()
+        .args([
+            "scenario",
+            "--scenario",
+            scenario.path().to_str().unwrap(),
+            "--contract",
+            wasm.to_str().unwrap(),
+            "--timeout",
+            "30",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "All scenario steps passed successfully!",
+        ));
+}
+
+#[test]
 fn scenario_passes_when_no_events_are_expected() {
     let wasm = fixture_wasm("counter");
     let scenario = NamedTempFile::new().unwrap();

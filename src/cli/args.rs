@@ -765,6 +765,26 @@ mod tests {
         assert_eq!(args.path_cap, Some(200));
         assert_eq!(args.timeout, Some(45));
     }
+
+    #[test]
+    fn scenario_accepts_optional_timeout_override() {
+        let cli = Cli::parse_from([
+            "soroban-debug",
+            "scenario",
+            "--scenario",
+            "scenario.toml",
+            "--contract",
+            "contract.wasm",
+            "--timeout",
+            "0",
+        ]);
+
+        let Commands::Scenario(args) = cli.command.expect("scenario command expected") else {
+            panic!("scenario command expected");
+        };
+
+        assert_eq!(args.timeout, Some(0));
+    }
 }
 
 #[derive(Parser)]
@@ -1008,4 +1028,9 @@ pub struct ScenarioArgs {
     /// Initial storage state as JSON object
     #[arg(long)]
     pub storage: Option<String>,
+
+    /// Default execution timeout in seconds for steps that do not override it.
+    /// Use 0 to disable the timeout entirely.
+    #[arg(long)]
+    pub timeout: Option<u64>,
 }

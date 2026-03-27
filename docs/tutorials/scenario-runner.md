@@ -16,6 +16,9 @@ The scenario runner executes a sequence of contract function calls defined in a 
 ### Root Structure
 
 ```toml
+[defaults]
+timeout_secs = 30
+
 [[steps]]
 # Step 1 configuration
 
@@ -32,8 +35,23 @@ Each step in a scenario supports the following fields:
 | `name` | String | Optional | Human-readable name for the step (defaults to function name) |
 | `function` | String | Required | Name of the contract function to call |
 | `args` | String | Optional | JSON array of arguments to pass to the function |
+| `timeout_secs` | Integer | Optional | Per-step execution timeout override in seconds. `0` disables the timeout |
 | `expected_return` | String | Optional | Expected return value (string comparison) |
 | `expected_storage` | Table | Optional | Map of storage keys to expected values |
+
+### Timeout Defaults and Overrides
+
+You can define a scenario-wide default timeout in a top-level `[defaults]` table and then
+override it for individual steps with `timeout_secs`.
+
+Timeout precedence is:
+
+1. Step `timeout_secs`
+2. Scenario `[defaults].timeout_secs`
+3. CLI `scenario --timeout`
+4. Built-in default of 30 seconds
+
+Use `0` at either the default or step level to disable timeout enforcement.
 
 ### Storage Assertions
 

@@ -3,7 +3,7 @@ use crate::debugger::engine::DebuggerEngine;
 use crate::inspector::budget::{BudgetInfo, BudgetInspector};
 use crate::inspector::events::{ContractEvent, EventInspector};
 use crate::logging;
-use crate::runtime::executor::ContractExecutor;
+use crate::runtime::executor::{ContractExecutor, DEFAULT_EXECUTION_TIMEOUT_SECS};
 use crate::ui::formatter::Formatter;
 use crate::{DebuggerError, Result};
 use regex::Regex;
@@ -13,7 +13,14 @@ use std::fs;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Scenario {
+    #[serde(default)]
+    pub defaults: ScenarioDefaults,
     pub steps: Vec<ScenarioStep>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ScenarioDefaults {
+    pub timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -21,6 +28,7 @@ pub struct ScenarioStep {
     pub name: Option<String>,
     pub function: String,
     pub args: Option<String>,
+    pub timeout_secs: Option<u64>,
     pub expected_return: Option<String>,
     pub expected_storage: Option<HashMap<String, String>>,
     pub expected_events: Option<Vec<ScenarioEventAssertion>>,
@@ -98,6 +106,9 @@ pub fn run_scenario(args: ScenarioArgs, _verbosity: Verbosity) -> Result<()> {
 
     for (i, step) in scenario.steps.iter().enumerate() {
         let step_label = step.name.as_deref().unwrap_or(&step.function);
+        let effective_timeout =
+            resolve_step_timeout(step.timeout_secs, scenario.defaults.timeout_secs, args.timeout);
+        engine.executor_mut().set_timeout(effective_timeout);
         println!(
             "{}",
             Formatter::info(format!("Step {}: {}", i + 1, step_label))
@@ -438,6 +449,17 @@ fn assert_budget_limits(
     }
 }
 
+fn resolve_step_timeout(
+    step_timeout_secs: Option<u64>,
+    scenario_default_timeout_secs: Option<u64>,
+    cli_timeout_secs: Option<u64>,
+) -> u64 {
+    step_timeout_secs
+        .or(scenario_default_timeout_secs)
+        .or(cli_timeout_secs)
+        .unwrap_or(DEFAULT_EXECUTION_TIMEOUT_SECS)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,6 +531,7 @@ mod tests {
         "#;
 
         let scenario: Scenario = toml::from_str(toml_str).unwrap();
+        assert_eq!(scenario.defaults, ScenarioDefaults::default());
         assert_eq!(scenario.steps[0].capture.as_deref(), Some("my_result"));
         assert!(scenario.steps[1].capture.is_none());
         assert_eq!(
@@ -520,6 +543,9 @@ mod tests {
     #[test]
     fn test_scenario_deserialization() {
         let toml_str = r#"
+            [defaults]
+            timeout_secs = 45
+
             [[steps]]
             name = "Init"
             function = "init"
@@ -543,10 +569,17 @@ mod tests {
 
         let scenario: Scenario = toml::from_str(toml_str).unwrap();
         assert_eq!(scenario.steps.len(), 2);
+        assert_eq!(
+            scenario.defaults,
+            ScenarioDefaults {
+                timeout_secs: Some(45)
+            }
+        );
 
         assert_eq!(scenario.steps[0].name.as_deref(), Some("Init"));
         assert_eq!(scenario.steps[0].function, "init");
         assert_eq!(scenario.steps[0].args.as_deref(), Some("[\"admin\", 10]"));
+        assert!(scenario.steps[0].timeout_secs.is_none());
         assert_eq!(scenario.steps[0].expected_return.as_deref(), Some("()"));
         assert!(scenario.steps[0].expected_storage.is_none());
         assert!(scenario.steps[0].expected_events.is_none());
@@ -557,6 +590,7 @@ mod tests {
         assert_eq!(scenario.steps[1].name.as_deref(), Some("Get Counter"));
         assert_eq!(scenario.steps[1].function, "get");
         assert!(scenario.steps[1].args.is_none());
+        assert!(scenario.steps[1].timeout_secs.is_none());
         assert_eq!(scenario.steps[1].expected_return.as_deref(), Some("1"));
         assert_eq!(scenario.steps[1].expected_events.as_ref().unwrap().len(), 1);
         assert_eq!(
@@ -636,6 +670,44 @@ mod tests {
         assert!(scenario.steps[0].expected_error.is_none());
         assert!(scenario.steps[0].expected_panic.is_none());
         assert_eq!(scenario.steps[0].expected_return.as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn test_step_timeout_override_deserialization() {
+        let toml_str = r#"
+            [defaults]
+            timeout_secs = 30
+
+            [[steps]]
+            function = "increment"
+            timeout_secs = 0
+            expected_return = "1"
+        "#;
+
+        let scenario: Scenario = toml::from_str(toml_str).unwrap();
+        assert_eq!(scenario.defaults.timeout_secs, Some(30));
+        assert_eq!(scenario.steps[0].timeout_secs, Some(0));
+    }
+
+    #[test]
+    fn test_effective_timeout_prefers_step_override() {
+        let effective = resolve_step_timeout(Some(5), Some(20), Some(30));
+        assert_eq!(effective, 5);
+    }
+
+    #[test]
+    fn test_effective_timeout_prefers_scenario_default_over_cli() {
+        let effective = resolve_step_timeout(None, Some(20), Some(30));
+        assert_eq!(effective, 20);
+    }
+
+    #[test]
+    fn test_effective_timeout_falls_back_to_cli_or_runtime_default() {
+        assert_eq!(resolve_step_timeout(None, None, Some(30)), 30);
+        assert_eq!(
+            resolve_step_timeout(None, None, None),
+            DEFAULT_EXECUTION_TIMEOUT_SECS
+        );
     }
 
     #[test]

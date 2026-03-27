@@ -262,11 +262,30 @@ the user-facing name for the value printed in the report).
 Run a multi-step test scenario defined in a TOML file:
 
 ```bash
-soroban-debug scenario --scenario my_scenario.toml --contract my_contract.wasm
+soroban-debug scenario --scenario my_scenario.toml --contract my_contract.wasm --timeout 30
 ```
 
 Each step can specify a function to call, its arguments, and assertions on the return value,
 contract storage, emitted events, and CPU/memory budget.
+
+Scenario timeouts inherit in this order: step `timeout_secs`, then top-level `[defaults].timeout_secs`,
+then the CLI `--timeout` value, and finally the built-in 30 second default. Use `0` to disable the
+timeout for a default or a specific step.
+
+```toml
+[defaults]
+timeout_secs = 10
+
+[[steps]]
+name = "Cheap setup"
+function = "initialize"
+expected_return = "()"
+
+[[steps]]
+name = "Expensive replay"
+function = "replay_heavy_case"
+timeout_secs = 0
+```
 
 #### Capturing Step Outputs into Variables
 
@@ -306,6 +325,7 @@ currently available.
 | `name` | string | Optional human-readable label for the step |
 | `function` | string | Contract function to call |
 | `args` | string (JSON) | Function arguments as a JSON array. Supports `{{var}}` interpolation. |
+| `timeout_secs` | integer | Override the inherited execution timeout for this step. `0` disables timeout enforcement. |
 | `capture` | string | Variable name to store the return value in for use by later steps |
 | `expected_return` | string | Assert the return value equals this. Supports `{{var}}` interpolation. |
 | `expected_error` | string | Assert the step fails with an error message containing this substring |
