@@ -59,6 +59,7 @@ function parseRuntimeError(error: unknown): StructuredRuntimeError {
 type LaunchRequestArgs = DebugProtocol.LaunchRequestArguments & DebuggerProcessConfig;
 
 export class SorobanDebugSession extends DebugSession {
+  private static readonly FIRST_CONTINUE_STOP_REASON: 'breakpoint' = 'breakpoint';
   private logManager: LogManager | undefined;
   private debuggerProcess: DebuggerProcess | null = null;
   private state: DebuggerState = {
@@ -498,7 +499,8 @@ export class SorobanDebugSession extends DebugSession {
       this.sendResponse(response);
 
       if (!this.hasExecuted) {
-        await this.runExecution('breakpoint');
+        // After the synthetic entry stop, the first continue should surface as a breakpoint stop.
+        await this.runExecution(SorobanDebugSession.FIRST_CONTINUE_STOP_REASON);
         return;
       }
 

@@ -169,6 +169,7 @@ async function main(): Promise<void> {
   }
 
   await runSmokeSuite();
+  console.log('Running DAP E2E suite (includes first-continue stop-reason regression assertion)');
   await runDapE2ESuite();
   
   const compatibilityMessage = formatProtocolMismatchMessage({

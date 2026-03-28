@@ -1,4 +1,5 @@
 {
+  "$schema": "./package.schema.json",
   "name": "soroban-debugger",
   "displayName": "Soroban Debugger",
   "description": "Debug adapter for Soroban smart contracts with breakpoints, variable inspection, and call stack visualization",
@@ -24,9 +25,7 @@
     "smart-contract"
   ],
   "activationEvents": [
-    "onDebugResolve:soroban",
-    "onCommand:soroban-debugger.runLaunchPreflight",
-    "onCommand:soroban-debugger.diagnoseSourceMap"
+    "onDebugResolve:soroban"
   ],
   "main": "./dist/extension.js",
   "contributes": {
