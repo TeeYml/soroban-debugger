@@ -230,22 +230,23 @@ impl SourceMap {
                     if let Some(file_path) =
                         self.get_file_path(&dwarf, &unit, header, row.file_index())
                     {
-                        let offset =
-                            self.normalize_wasm_offset(row.address() as usize, wasm_bytes.len());
+                        let (offset, alt_offset) =
+                            self.normalize_wasm_offsets(row.address() as usize, wasm_bytes.len());
                         let line = row.line().map(|l| l.get() as u32).unwrap_or(0);
                         let column = match row.column() {
                             gimli::ColumnType::LeftEdge => None,
                             gimli::ColumnType::Column(column) => Some(column.get() as u32),
                         };
+                        let location = SourceLocation {
+                            file: file_path,
+                            line,
+                            column,
+                        };
 
-                        self.offsets.insert(
-                            offset,
-                            SourceLocation {
-                                file: file_path,
-                                line,
-                                column,
-                            },
-                        );
+                        self.offsets.insert(offset, location.clone());
+                        if let Some(alt_offset) = alt_offset {
+                            self.offsets.entry(alt_offset).or_insert(location);
+                        }
                     }
                 }
             } else {
@@ -337,18 +338,17 @@ impl SourceMap {
                 // load() failed partway through: any mappings collected are
                 // partial. Downgrade "source" → "partial-source" so the mode
                 // accurately reflects that the parse did not complete.
-                let (fallback_mode, fallback_message) = if mappings_count > 0
-                    && fallback_mode == "source"
-                {
-                    (
-                        "partial-source".to_string(),
-                        "DWARF parse failed after collecting some mappings; \
+                let (fallback_mode, fallback_message) =
+                    if mappings_count > 0 && fallback_mode == "source" {
+                        (
+                            "partial-source".to_string(),
+                            "DWARF parse failed after collecting some mappings; \
                          results may be incomplete."
-                            .to_string(),
-                    )
-                } else {
-                    (fallback_mode, fallback_message)
-                };
+                                .to_string(),
+                        )
+                    } else {
+                        (fallback_mode, fallback_message)
+                    };
 
                 Ok(SourceMapInspectionReport {
                     mappings_count,
@@ -377,26 +377,45 @@ impl SourceMap {
         self.offsets.iter().map(|(o, l)| (*o, l))
     }
 
-    fn normalize_wasm_offset(&self, dwarf_address: usize, wasm_len: usize) -> usize {
+    fn normalize_wasm_offsets(
+        &self,
+        dwarf_address: usize,
+        wasm_len: usize,
+    ) -> (usize, Option<usize>) {
         let Some(code_range) = &self.code_section_range else {
-            return dwarf_address;
+            return (dwarf_address, None);
         };
 
-        // Common case: DWARF line-program addresses are offsets into the code-section payload.
         let code_start = code_range.start;
+        let code_end = code_range.end;
         let code_len = code_range.end.saturating_sub(code_range.start);
+        let module_candidate = dwarf_address;
 
-        // If the address already looks like a module/file offset, keep it.
-        if dwarf_address >= code_start && dwarf_address < wasm_len {
-            return dwarf_address;
+        let relative_candidate = dwarf_address
+            .checked_add(code_start)
+            .filter(|candidate| *candidate < wasm_len);
+        let module_in_code = module_candidate >= code_start
+            && module_candidate < code_end
+            && module_candidate < wasm_len;
+        let relative_in_code = dwarf_address < code_len
+            && relative_candidate
+                .map(|candidate| candidate >= code_start && candidate < code_end)
+                .unwrap_or(false);
+
+        match (module_in_code, relative_in_code) {
+            (true, true) => (module_candidate, relative_candidate),
+            (true, false) => (module_candidate, None),
+            (false, true) => (relative_candidate.unwrap_or(module_candidate), None),
+            (false, false) => {
+                if module_candidate < wasm_len {
+                    (module_candidate, None)
+                } else if let Some(relative_candidate) = relative_candidate {
+                    (relative_candidate, None)
+                } else {
+                    (dwarf_address, None)
+                }
+            }
         }
-
-        // Otherwise, treat addresses within the code-section payload length as relative.
-        if dwarf_address < code_len {
-            return code_start.saturating_add(dwarf_address);
-        }
-
-        dwarf_address
     }
 
     fn get_file_path(
@@ -1000,6 +1019,41 @@ mod tests {
         push_section(&mut bytes, 0x0a, &code_section);
 
         bytes
+    }
+
+    #[test]
+    fn normalize_wasm_offsets_keeps_alternate_for_ambiguous_addresses() {
+        let sm = SourceMap {
+            code_section_range: Some(100..400),
+            ..SourceMap::new()
+        };
+
+        let (primary, alternate) = sm.normalize_wasm_offsets(150, 500);
+
+        assert_eq!(primary, 150);
+        assert_eq!(alternate, Some(250));
+    }
+
+    #[test]
+    fn ambiguous_addresses_resolve_for_both_coordinate_spaces() {
+        let mut sm = SourceMap {
+            code_section_range: Some(100..400),
+            ..SourceMap::new()
+        };
+        let location = SourceLocation {
+            file: PathBuf::from("lib.rs"),
+            line: 9,
+            column: Some(1),
+        };
+
+        let (primary, alternate) = sm.normalize_wasm_offsets(150, 500);
+        sm.offsets.insert(primary, location.clone());
+        if let Some(alternate) = alternate {
+            sm.offsets.entry(alternate).or_insert(location.clone());
+        }
+
+        assert_eq!(sm.lookup(150), Some(location.clone()));
+        assert_eq!(sm.lookup(250), Some(location));
     }
 
     #[test]
