@@ -163,7 +163,9 @@ export class SorobanDebugSession extends DebugSession {
         host: args.host,
         token: args.token,
         requestTimeoutMs: args.requestTimeoutMs,
-        connectTimeoutMs: args.connectTimeoutMs
+        connectTimeoutMs: args.connectTimeoutMs,
+        storageFilter: args.storageFilter,
+        repeat: args.repeat
       }, this.logManager, this.launchLifecycleReporter);
 
       await this.debuggerProcess.start();
@@ -198,7 +200,12 @@ export class SorobanDebugSession extends DebugSession {
   ): Promise<void> {
     this.logManager?.log(ManagerLogLevel.Info, LogPhase.DAP, `AttachRequest: ${JSON.stringify(args)}`);
     try {
-      const attachConfig: DebuggerProcessConfig = { ...args, spawnServer: false };
+      const attachConfig: DebuggerProcessConfig = { 
+        ...args, 
+        spawnServer: false,
+        storageFilter: args.storageFilter,
+        repeat: args.repeat
+      };
       const preflight = await validateLaunchConfig(attachConfig);
       if (!preflight.ok) {
         const issue = preflight.issues[0];

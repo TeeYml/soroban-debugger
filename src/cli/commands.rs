@@ -1853,6 +1853,8 @@ pub fn server(args: ServerArgs) -> Result<()> {
         args.token.clone(),
         args.tls_cert.as_deref(),
         args.tls_key.as_deref(),
+        args.repeat,
+        args.storage_filter,
     )?;
 
     tokio::runtime::Runtime::new()
@@ -1863,7 +1865,11 @@ pub fn server(args: ServerArgs) -> Result<()> {
 /// Connect to remote debug server
 pub fn remote(args: RemoteArgs, _verbosity: Verbosity) -> Result<()> {
     print_info(format!("Connecting to remote debugger at {}", args.remote));
-    let mut client = crate::client::RemoteClient::connect(&args.remote, args.token.clone())?;
+    let mut config = crate::client::RemoteClientConfig::default();
+    config.tls_cert = args.tls_cert.clone();
+    config.tls_key = args.tls_key.clone();
+    config.tls_ca = args.tls_ca.clone();
+    let mut client = crate::client::RemoteClient::connect_with_config(&args.remote, args.token.clone(), config)?;
 
     if let Some(contract) = &args.contract {
         print_info(format!("Loading contract: {:?}", contract));

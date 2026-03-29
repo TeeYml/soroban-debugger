@@ -32,6 +32,8 @@ export interface DebuggerProcessConfig {
    * Intended for remote-attach workflows and tests.
    */
   spawnServer?: boolean;
+  storageFilter?: string[];
+  repeat?: number;
 }
 
 export interface DebuggerExecutionResult {
@@ -780,6 +782,16 @@ export class DebuggerProcess {
 
     if (this.config.token) {
       args.push("--token", this.config.token);
+    }
+
+    if (this.config.storageFilter && this.config.storageFilter.length > 0) {
+      for (const filter of this.config.storageFilter) {
+        args.push("--storage-filter", filter);
+      }
+    }
+
+    if (this.config.repeat && this.config.repeat > 1) {
+      args.push("--repeat", String(this.config.repeat));
     }
 
     return args;
