@@ -6,6 +6,7 @@ import {
   WIRE_PROTOCOL_MAX_VERSION,
   WIRE_PROTOCOL_MIN_VERSION,
 } from "../dap/protocol";
+import { shouldPromoteToFunctionBreakpoint } from "../dap/sourceBreakpoints";
 import { LogManager, LogLevel, LogPhase } from "../debug/logManager";
 
 export interface DebuggerProcessConfig {
@@ -724,6 +725,7 @@ export class DebuggerProcess {
       functionName: bp.function,
       reasonCode: bp.reason_code,
       message: bp.message,
+      setBreakpoint: shouldPromoteToFunctionBreakpoint(bp.verified, bp.function, bp.reason_code),
     }));
   }
 

@@ -260,7 +260,7 @@ export class SorobanDebugSession extends DebugSession {
           message: 'Debugger is not launched or source path is unavailable'
         }));
       } else {
-        let serverResolved: Array<{ requestedLine: number; line: number; verified: boolean; functionName?: string; reasonCode: string; message: string }> | null = null;
+        let serverResolved: Array<{ requestedLine: number; line: number; verified: boolean; functionName?: string; reasonCode: string; message: string; setBreakpoint?: boolean }> | null = null;
         try {
           serverResolved = await this.debuggerProcess.resolveSourceBreakpoints(source, lines, this.exportedFunctions);
         } catch {
@@ -282,7 +282,7 @@ export class SorobanDebugSession extends DebugSession {
             functionName: bp.functionName,
             reasonCode: bp.reasonCode,
             message: bp.message,
-            setBreakpoint: bp.verified && Boolean(bp.functionName)
+            setBreakpoint: bp.setBreakpoint
           }));
         } else {
           resolved = resolveSourceBreakpoints(source, lines, this.exportedFunctions, sourceHistory);
