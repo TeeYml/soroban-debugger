@@ -929,32 +929,15 @@ pub fn run(args: RunArgs, verbosity: Verbosity) -> Result<()> {
             result_obj["ledger_entries"] = ledger.to_json();
         }
 
-        let output = serde_json::json!({
-            "schema_version": "1.0",
-            "command": "run",
-            "status": "success",
-            "result": result_obj,
-            "sha256": wasm_hash,
-            "budget": {
-                "cpu_instructions": budget.cpu_instructions,
-                "memory_bytes": budget.memory_bytes,
-            },
-            "storage_diff": storage_diff,
-            "error": serde_json::Value::Null
-        });
+        let output = crate::output::VersionedOutput::success("run", result_obj);
 
         match serde_json::to_string_pretty(&output) {
             Ok(json) => println!("{}", json),
             Err(e) => {
-                let err_output = serde_json::json!({
-                    "schema_version": "1.0",
-                    "command": "run",
-                    "status": "error",
-                    "result": serde_json::Value::Null,
-                    "error": {
-                        "message": format!("Failed to serialize output: {}", e)
-                    }
-                });
+                let err_output = crate::output::VersionedOutput::<serde_json::Value>::error(
+                    "run",
+                    format!("Failed to serialize output: {}", e),
+                );
                 if let Ok(err_json) = serde_json::to_string_pretty(&err_output) {
                     println!("{}", err_json);
                 }

@@ -52,7 +52,7 @@ impl DebugServer {
             (None, None) => None,
             _ => {
                 return Err(miette::miette!(
-                    "TLS requires both certificate and key paths (--tls-cert and --tls-key)"
+                    "TLS requires both certificate and key paths (--tls-cert and --tls-key). Provide both flags together, or remove both flags to run without native TLS."
                 ));
             }
         };
