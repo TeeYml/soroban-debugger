@@ -81,8 +81,8 @@ Legend:
 | Configure server port | `--port <n>` on `server` command | YES — `"port"` in `launch.json` | |
 | Configure auth token | `--token <t>` on `server` command | YES — `"token"` in `launch.json` | |
 | Connect as remote client | `soroban-debug remote --remote <host:port>` | YES — `"request": "attach"` in `launch.json` | Set `request: "attach"`, `host`, and `port` in `launch.json`. The extension connects to the pre-existing server without spawning a subprocess. |
-| TLS encryption — server | `--tls-cert <file> --tls-key <file>` on `server` | YES — CLI flags | Pass `--tls-cert/--tls-key` when spawning the server. |
-| TLS encryption — client | `--tls-cert`/`--tls-key`/`--tls-ca` on `remote` | YES | CLI flags for `remote` subcommand. |
+| TLS encryption — server | `--tls-cert <file> --tls-key <file>` on `server` | YES — `"tlsCert"`, `"tlsKey"` in `launch.json` | Pass `--tls-cert/--tls-key` when spawning the server via `launch`. |
+| TLS encryption — client | `--tls-cert`/`--tls-key`/`--tls-ca` on `remote` | YES — `"tlsCert"`, `"tlsKey"` in `launch.json` | Pass `"tlsCert"` and `"tlsKey"` when attaching to a remote server. |
 
 ---
 
@@ -135,7 +135,8 @@ For VS Code users, this table maps CLI flags to their `launch.json` equivalents.
 | `--step-mode` | (none) | NO |
 | `--batch-args` | `batchArgs` | YES |
 | `--repeat` | `repeat` | YES |
-| `--tls-cert` / `--tls-key` | Passed via CLI arguments | YES |
+| `--tls-cert` | `tlsCert` | YES |
+| `--tls-key` | `tlsKey` | YES |
 | `--import-storage` | Use `snapshotPath` instead | PARTIAL |
 | `--export-storage` | (none) | NO |
 | `--show-events` | (none) | NO |

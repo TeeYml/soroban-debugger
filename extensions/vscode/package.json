@@ -9,7 +9,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/stellar/soroban-debugger.git"
+    "url": "https://github.com/Timi16/soroban-debugger.git"
   },
   "engines": {
     "vscode": "^1.75.0"
@@ -112,6 +112,16 @@
                 "minLength": 1,
                 "pattern": ".*\\S.*"
               },
+              "tlsCert": {
+                "type": "string",
+                "description": "Optional path to a TLS certificate file for secure server connections.",
+                "pattern": ".*\\S.*"
+              },
+              "tlsKey": {
+                "type": "string",
+                "description": "Optional path to a TLS private key file for secure server connections.",
+                "pattern": ".*\\S.*"
+              },
               "storageFilter": {
                 "type": "array",
                 "description": "Filter storage view to only show keys matching pattern (e.g. ['balance:*', 're:^contract_.*']).",
@@ -173,6 +183,16 @@
                 "type": "string",
                 "description": "Optional single-line authentication token for the remote debugger server.",
                 "minLength": 1,
+                "pattern": ".*\\S.*"
+              },
+              "tlsCert": {
+                "type": "string",
+                "description": "Optional path to a TLS certificate file for secure remote connections.",
+                "pattern": ".*\\S.*"
+              },
+              "tlsKey": {
+                "type": "string",
+                "description": "Optional path to a TLS private key file for secure remote connections.",
                 "pattern": ".*\\S.*"
               },
               "trace": {

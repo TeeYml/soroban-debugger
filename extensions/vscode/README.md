@@ -27,7 +27,7 @@ A Visual Studio Code extension that integrates the Soroban smart contract debugg
 1. Clone the soroban-debugger repository:
 
 ```bash
-git clone https://github.com/stellar/soroban-debugger.git
+git clone https://github.com/Timi16/soroban-debugger.git
 cd soroban-debugger
 ```
 
@@ -140,6 +140,15 @@ Create a `snapshot.json` file with the initial state for your debugger session. 
 - **args** (array): Arguments to pass to the contract function
   - Default: `[]`
   - Example: `["arg1", "arg2"]`
+
+- **token** (string): Optional single-line authentication token for the remote debugger server.
+  - Tip: When using `request: "launch"`, this token is passed to the spawned server and used for subsequent authentication.
+
+- **tlsCert** (string): Optional path to a TLS certificate file for secure connections.
+  - Required if `tlsKey` is provided.
+
+- **tlsKey** (string): Optional path to a TLS private key file for secure connections.
+  - Required if `tlsCert` is provided.
 
 - **trace** (boolean): Enable detailed trace logging for debugging the adapter itself
   - Default: `false`
@@ -499,8 +508,8 @@ This extension is part of the Soroban project and is licensed under the MIT Lice
 
 ## Support & Feedback
 
-- 📮 Report bugs via [GitHub Issues](https://github.com/stellar/soroban-debugger/issues)
-- 💡 Request features in [GitHub Discussions](https://github.com/stellar/soroban-debugger/discussions)
+- 📮 Report bugs via [GitHub Issues](https://github.com/Timi16/soroban-debugger/issues)
+- 💡 Request features in [GitHub Discussions](https://github.com/Timi16/soroban-debugger/discussions)
 - 📖 Read the [main README](../../README.md) for general Soroban documentation
 
 ## Related Resources

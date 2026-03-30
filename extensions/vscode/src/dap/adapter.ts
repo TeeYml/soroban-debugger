@@ -170,6 +170,8 @@ export class SorobanDebugSession extends DebugSession {
         connectTimeoutMs: args.connectTimeoutMs,
         storageFilter: args.storageFilter,
         repeat: args.repeat,
+        tlsCert: args.tlsCert,
+        tlsKey: args.tlsKey,
         batchArgs: args.batchArgs
       }, this.logManager, this.launchLifecycleReporter);
 
