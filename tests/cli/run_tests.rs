@@ -167,3 +167,67 @@ fn test_run_accepts_dry_run_flag() {
         ])
         .output();
 }
+
+#[test]
+fn test_remote_accepts_timeout_ms_flag() {
+    let mut cmd = assert_cmd::Command::cargo_bin("soroban-debug").expect("Failed to find binary");
+    cmd.args([
+        "remote",
+        "--remote",
+        "127.0.0.1:9229",
+        "--timeout-ms",
+        "5000",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("Connection").or(predicate::str::contains("connect")));
+}
+
+#[test]
+fn test_remote_accepts_max_retries_flag() {
+    let mut cmd = assert_cmd::Command::cargo_bin("soroban-debug").expect("Failed to find binary");
+    cmd.args([
+        "remote",
+        "--remote",
+        "127.0.0.1:9229",
+        "--max-retries",
+        "5",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("Connection").or(predicate::str::contains("connect")));
+}
+
+#[test]
+fn test_remote_accepts_retry_delay_ms_flag() {
+    let mut cmd = assert_cmd::Command::cargo_bin("soroban-debug").expect("Failed to find binary");
+    cmd.args([
+        "remote",
+        "--remote",
+        "127.0.0.1:9229",
+        "--retry-delay-ms",
+        "500",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("Connection").or(predicate::str::contains("connect")));
+}
+
+#[test]
+fn test_remote_accepts_all_timeout_retry_flags() {
+    let mut cmd = assert_cmd::Command::cargo_bin("soroban-debug").expect("Failed to find binary");
+    cmd.args([
+        "remote",
+        "--remote",
+        "127.0.0.1:9229",
+        "--timeout-ms",
+        "10000",
+        "--max-retries",
+        "5",
+        "--retry-delay-ms",
+        "500",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("Connection").or(predicate::str::contains("connect")));
+}

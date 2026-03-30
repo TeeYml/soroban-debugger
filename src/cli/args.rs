@@ -1090,6 +1090,18 @@ pub struct RemoteArgs {
     /// Function arguments as JSON array
     #[arg(short, long)]
     pub args: Option<String>,
+
+    /// Default request timeout in milliseconds (default: 30000)
+    #[arg(long, value_name = "MS", default_value = "30000")]
+    pub timeout_ms: u64,
+
+    /// Maximum number of retry attempts for failed requests (default: 3)
+    #[arg(long, value_name = "N", default_value = "3")]
+    pub max_retries: usize,
+
+    /// Base delay between retries in milliseconds (default: 200)
+    #[arg(long, value_name = "MS", default_value = "200")]
+    pub retry_delay_ms: u64,
 }
 
 #[derive(Parser)]
