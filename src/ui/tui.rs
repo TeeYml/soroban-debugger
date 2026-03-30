@@ -54,12 +54,12 @@ impl DebuggerUI {
         loop {
             print!("\n(debug) ");
             io::stdout().flush().map_err(|e| {
-                crate::DebuggerError::FileError(format!("Failed to flush stdout: {}", e))
+                crate::DebuggerError::IoError(format!("Failed to flush stdout: {}", e))
             })?;
 
             let mut input = String::new();
             io::stdin().read_line(&mut input).map_err(|e| {
-                crate::DebuggerError::FileError(format!("Failed to read line: {}", e))
+                crate::DebuggerError::IoError(format!("Failed to read line: {}", e))
             })?;
 
             let command = input.trim();
@@ -132,7 +132,22 @@ impl DebuggerUI {
                 } else {
                     let function = parts[1].to_string();
                     let args = if parts.len() > 2 {
-                        Some(parts[2..].join(" "))
+                        // Extract raw arguments from the original command string
+                        // to preserve internal whitespace and quotes.
+                        let mut current_pos = 0;
+                        // Skip "run" and function name tokens in the original string.
+                        let tokens = [parts[0], parts[1]];
+                        for token in tokens {
+                            if let Some(pos) = command[current_pos..].find(token) {
+                                current_pos += pos + token.len();
+                            }
+                        }
+                        let raw_args = command[current_pos..].trim();
+                        if raw_args.is_empty() {
+                            None
+                        } else {
+                            Some(raw_args.to_string())
+                        }
                     } else {
                         None
                     };
