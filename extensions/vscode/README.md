@@ -27,7 +27,7 @@ A Visual Studio Code extension that integrates the Soroban smart contract debugg
 1. Clone the soroban-debugger repository:
 
 ```bash
-git clone https://github.com/stellar/soroban-debugger.git
+git clone https://github.com/Timi16/soroban-debugger.git
 cd soroban-debugger
 ```
 
@@ -499,8 +499,8 @@ This extension is part of the Soroban project and is licensed under the MIT Lice
 
 ## Support & Feedback
 
-- 📮 Report bugs via [GitHub Issues](https://github.com/stellar/soroban-debugger/issues)
-- 💡 Request features in [GitHub Discussions](https://github.com/stellar/soroban-debugger/discussions)
+- 📮 Report bugs via [GitHub Issues](https://github.com/Timi16/soroban-debugger/issues)
+- 💡 Request features in [GitHub Discussions](https://github.com/Timi16/soroban-debugger/discussions)
 - 📖 Read the [main README](../../README.md) for general Soroban documentation
 
 ## Related Resources
