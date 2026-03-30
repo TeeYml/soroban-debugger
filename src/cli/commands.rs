@@ -664,10 +664,6 @@ pub fn run(args: RunArgs, verbosity: Verbosity) -> Result<()> {
 
     let mut engine = DebuggerEngine::new(executor, args.breakpoint.clone());
 
-    // Execute locally with debugging
-    // if !args.is_json_output() {
-    //     println!("\n--- Execution Start ---\n");
-    // }
     if args.instruction_debug {
         print_info("Enabling instruction-level debugging...");
         engine.enable_instruction_debug(&wasm_bytes)?;
