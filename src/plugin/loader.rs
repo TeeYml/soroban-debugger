@@ -434,27 +434,6 @@ impl Drop for LoadedPlugin {
         }
     }
 }
-
-
-
-#[cfg(test)]
-impl LoadedPlugin {
-    pub(crate) fn from_parts_for_tests(
-        plugin: Box<dyn InspectorPlugin>,
-        path: PathBuf,
-        manifest: PluginManifest,
-        trust: PluginTrustAssessment,
-    ) -> Self {
-        Self {
-            plugin,
-            library: None,
-            path,
-            manifest,
-            trust,
-        }
-    }
-}
-
 /// Checks if the plugin API version matches the host's expected version.
 pub fn check_api_version(plugin_version: u32) -> Result<(), crate::plugin::api::PluginError> {
     use crate::plugin::api::{PluginError, PLUGIN_API_VERSION};
@@ -469,11 +448,11 @@ pub fn check_api_version(plugin_version: u32) -> Result<(), crate::plugin::api::
 
 #[cfg(test)]
 mod tests {
-    use super::super::manifest::PluginSignature;
-mod version_tests {
     use super::*;
+    use super::super::manifest::PluginSignature;
     use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
     use base64::Engine;
+    use crate::plugin::api::{PluginError, PLUGIN_API_VERSION};
     use ed25519_dalek::{Signer, SigningKey};
     use std::collections::BTreeSet;
     use std::path::Path;
@@ -512,7 +491,6 @@ mod version_tests {
         });
         manifest
     }
-    use crate::plugin::api::{PluginError, PLUGIN_API_VERSION};
 
     #[test]
     fn test_default_plugin_dir() {
@@ -522,6 +500,8 @@ mod version_tests {
         let path = dir.unwrap();
         assert!(path.ends_with(".soroban-debug/plugins"));
     }
+
+    #[test]
     fn test_api_version_check() {
         let result = check_api_version(999);
         assert!(matches!(result, Err(PluginError::VersionMismatch { .. })));
@@ -668,5 +648,4 @@ mod version_tests {
         let result_ok = check_api_version(PLUGIN_API_VERSION);
         assert!(result_ok.is_ok());
     }
-}
 }
