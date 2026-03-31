@@ -576,6 +576,34 @@ async function main(): Promise<void> {
   assert.equal(badToken.ok, false, "Expected blank token to fail preflight");
   assert.equal(badToken.issues[0].field, "token");
 
+  const missingTlsCert = await validateLaunchConfig({
+    binaryPath: preflightBinaryPath,
+    contractPath,
+    entrypoint: "echo",
+    args: [],
+    tlsKey: snapshotPath,
+  });
+  assert.equal(
+    missingTlsCert.ok,
+    false,
+    "Expected missing tlsCert to fail preflight when tlsKey is set",
+  );
+  assert.equal(missingTlsCert.issues[0].field, "tlsCert");
+
+  const missingTlsKey = await validateLaunchConfig({
+    binaryPath: preflightBinaryPath,
+    contractPath,
+    entrypoint: "echo",
+    args: [],
+    tlsCert: snapshotPath,
+  });
+  assert.equal(
+    missingTlsKey.ok,
+    false,
+    "Expected missing tlsKey to fail preflight when tlsCert is set",
+  );
+  assert.equal(missingTlsKey.issues[0].field, "tlsKey");
+
   {
     const candidates = collectSorobanLaunchConfigs([
       {

@@ -537,6 +537,34 @@ export async function runSmokeSuite(): Promise<void> {
   assert.equal(badToken.ok, false, "Expected blank token to fail preflight");
   assert.equal(badToken.issues[0].field, "token");
 
+  const missingTlsCert = await validateLaunchConfig({
+    binaryPath: preflightBinaryPath,
+    contractPath: fixtures.contractPath,
+    entrypoint: "echo",
+    args: [],
+    tlsKey: snapshotPath,
+  });
+  assert.equal(
+    missingTlsCert.ok,
+    false,
+    "Expected missing tlsCert to fail preflight when tlsKey is set",
+  );
+  assert.equal(missingTlsCert.issues[0].field, "tlsCert");
+
+  const missingTlsKey = await validateLaunchConfig({
+    binaryPath: preflightBinaryPath,
+    contractPath: fixtures.contractPath,
+    entrypoint: "echo",
+    args: [],
+    tlsCert: snapshotPath,
+  });
+  assert.equal(
+    missingTlsKey.ok,
+    false,
+    "Expected missing tlsKey to fail preflight when tlsCert is set",
+  );
+  assert.equal(missingTlsKey.issues[0].field, "tlsKey");
+
   // --- Attach mode preflight tests ---
 
   // attach with valid host + port (port must be in use, so we spin up a mock)
