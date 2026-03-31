@@ -968,28 +968,42 @@ async function runDapHappyPathE2E(
         {
           line: findFixtureLine(
             fixtures.sourcePath,
+            FIXTURE_BREAKPOINT_MARKERS.exportedEcho,
+          ),
+        },
+        {
+          line: findFixtureLine(
+            fixtures.sourcePath,
             FIXTURE_BREAKPOINT_MARKERS.nonExportedHelper,
           ),
         },
       ],
     });
+    const helperLine = findFixtureLine(
+      fixtures.sourcePath,
+      FIXTURE_BREAKPOINT_MARKERS.nonExportedHelper,
+    );
+    const helperBp = privateBps.body?.breakpoints?.find(
+      (bp: { line?: number }) => bp.line === helperLine,
+    );
     assert.equal(
       privateBps.success,
       true,
       `setBreakpoints for non-exported function failed: ${privateBps.message || ""}`,
     );
+    assert.ok(helperBp, "Expected helper breakpoint to be present in response");
     assert.equal(
-      privateBps.body?.breakpoints?.[0]?.verified,
+      helperBp?.verified,
       false,
       "Expected non-exported function source mapping to be unverified",
     );
     assert.equal(
-      privateBps.body?.breakpoints?.[0]?.reasonCode,
+      helperBp?.reasonCode,
       "HEURISTIC_NOT_EXPORTED",
       "Expected non-exported reason code on source breakpoint response",
     );
     assert.match(
-      String(privateBps.body?.breakpoints?.[0]?.message || ""),
+      String(helperBp?.message || ""),
       /HEURISTIC_NOT_EXPORTED/,
       "Expected non-exported breakpoint message to include reason code",
     );
