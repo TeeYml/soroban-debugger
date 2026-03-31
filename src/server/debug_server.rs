@@ -1364,15 +1364,16 @@ mod tests {
 
     #[test]
     fn test_server_rejects_partial_tls_configuration() {
-        let err = DebugServer::new(
+        let result = DebugServer::new(
             "127.0.0.1".to_string(),
             None,
             Some(Path::new("cert.pem")),
             None,
             None,
             Vec::new(),
-        )
-        .expect_err("Expected partial TLS configuration to fail");
+        );
+        assert!(result.is_err(), "Expected partial TLS configuration to fail");
+        let err = result.err().unwrap_or_else(|| miette::miette!("missing error"));
 
         assert!(
             err.to_string()
