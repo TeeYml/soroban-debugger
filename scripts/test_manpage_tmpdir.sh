@@ -14,7 +14,7 @@
 set -euo pipefail
 
 SOURCE_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/check_manpages.sh"
-TEST_ROOT="$(mktemp -d)"
+TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/check-manpage-test.XXXXXX")"
 REPO_ROOT="$TEST_ROOT/repo"
 BIN_DIR="$TEST_ROOT/bin"
 CUSTOM_TMPDIR="$TEST_ROOT/tmp"
