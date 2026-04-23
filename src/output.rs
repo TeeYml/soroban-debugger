@@ -421,3 +421,19 @@ mod tests {
         assert!(json.contains("contract.wasm"));
     }
 }
+
+/// Formats a resource timeline as a markdown table.
+pub fn format_resource_timeline(timeline: &[crate::inspector::budget::ResourceCheckpoint]) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let _ = writeln!(out, "| Time (ms) | CPU Instructions | Memory Bytes | Location |");
+    let _ = writeln!(out, "|-----------|------------------|--------------|----------|");
+    for point in timeline {
+        let _ = writeln!(
+            out,
+            "| {} | {} | {} | {} |",
+            point.timestamp_ms, point.cpu_instructions, point.memory_bytes, point.location_name
+        );
+    }
+    out
+}
