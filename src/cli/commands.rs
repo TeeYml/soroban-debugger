@@ -2044,6 +2044,7 @@ pub fn inspect(args: InspectArgs, _verbosity: Verbosity) -> Result<()> {
     }
 
     let info = crate::utils::wasm::get_module_info(&bytes)?;
+    let artifact_metadata = crate::utils::wasm::extract_wasm_artifact_metadata(&bytes)?;
     if args.format == OutputFormat::Json {
         let exported_functions = if args.functions {
             Some(crate::utils::wasm::parse_function_signatures(&bytes)?)
@@ -2057,6 +2058,7 @@ pub fn inspect(args: InspectArgs, _verbosity: Verbosity) -> Result<()> {
             "functions": info.function_count,
             "exports": info.export_count,
             "exported_functions": exported_functions,
+            "artifact_metadata": artifact_metadata,
         });
         let envelope = crate::output::VersionedOutput::success("inspect", result);
         println!(
@@ -2073,6 +2075,72 @@ pub fn inspect(args: InspectArgs, _verbosity: Verbosity) -> Result<()> {
     println!("Types: {}", info.type_count);
     println!("Functions: {}", info.function_count);
     println!("Exports: {}", info.export_count);
+    println!("Artifact metadata:");
+    println!(
+        "  Build profile hint: {}",
+        artifact_metadata.build_profile_hint
+    );
+    println!(
+        "  Optimization hint: {}",
+        artifact_metadata.optimization_hint
+    );
+    println!(
+        "  Name section: {}",
+        if artifact_metadata.name_section_present {
+            "present"
+        } else {
+            "absent"
+        }
+    );
+    println!(
+        "  DWARF debug sections: {}",
+        if artifact_metadata.has_debug_sections {
+            if artifact_metadata.debug_sections.is_empty() {
+                "present".to_string()
+            } else {
+                format!(
+                    "present ({}, {} bytes)",
+                    artifact_metadata.debug_sections.join(", "),
+                    artifact_metadata.debug_section_bytes
+                )
+            }
+        } else {
+            "absent".to_string()
+        }
+    );
+    if let Some(module_name) = &artifact_metadata.module_name {
+        println!("  Module name: {}", module_name);
+    }
+    if !artifact_metadata.package_hints.is_empty() {
+        println!("  Package hints:");
+        for hint in &artifact_metadata.package_hints {
+            println!("    - {}", hint);
+        }
+    }
+    if !artifact_metadata.producers.is_empty() {
+        println!("  Producers:");
+        for field in &artifact_metadata.producers {
+            let values = field
+                .values
+                .iter()
+                .map(|value| {
+                    if value.version.is_empty() {
+                        value.name.clone()
+                    } else {
+                        format!("{} {}", value.name, value.version)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("    {}: {}", field.name, values);
+        }
+    }
+    if !artifact_metadata.heuristic_notes.is_empty() {
+        println!("  Notes:");
+        for note in &artifact_metadata.heuristic_notes {
+            println!("    - {}", note);
+        }
+    }
     if args.functions {
         let sigs = crate::utils::wasm::parse_function_signatures(&bytes)?;
         println!("Exported functions:");
