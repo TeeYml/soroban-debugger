@@ -58,6 +58,7 @@ pub struct RemoteClientConfig {
     pub tls_cert: Option<PathBuf>,
     pub tls_key: Option<PathBuf>,
     pub tls_ca: Option<PathBuf>,
+    pub session_label: Option<String>,
 }
 
 impl Default for RemoteClientConfig {
@@ -71,6 +72,7 @@ impl Default for RemoteClientConfig {
             tls_cert: None,
             tls_key: None,
             tls_ca: None,
+            session_label: None,
         }
     }
 }
@@ -352,6 +354,7 @@ impl RemoteClient {
             protocol_max: PROTOCOL_MAX_VERSION,
             heartbeat_interval_ms: self.config.heartbeat_interval_ms,
             idle_timeout_ms: self.config.idle_timeout_ms,
+            session_label: self.config.session_label.clone(),
         })?;
 
         match response {
@@ -379,6 +382,10 @@ impl RemoteClient {
                     .into(),
             ),
         }
+    }
+
+    pub fn session_info(&self) -> Option<&crate::server::protocol::RemoteSessionInfo> {
+        self.session_info.as_ref()
     }
 
     /// Authenticate with the server
@@ -463,6 +470,7 @@ impl RemoteClient {
                 paused,
                 current_function,
                 step_count,
+                pause_reason: _,
                 ..
             } => Ok((paused, current_function, step_count)),
             DebugResponse::Error { message } => Err(DebuggerError::ExecutionError(message).into()),
@@ -481,6 +489,7 @@ impl RemoteClient {
                 paused,
                 current_function,
                 step_count,
+                pause_reason: _,
                 ..
             } => Ok((paused, current_function, step_count)),
             DebugResponse::Error { message } => Err(DebuggerError::ExecutionError(message).into()),
@@ -499,6 +508,7 @@ impl RemoteClient {
                 paused,
                 current_function,
                 step_count,
+                pause_reason: _,
                 ..
             } => Ok((paused, current_function, step_count)),
             DebugResponse::Error { message } => Err(DebuggerError::ExecutionError(message).into()),
@@ -522,7 +532,7 @@ impl RemoteClient {
     }
 
     /// Inspect current state
-    pub fn inspect(&mut self) -> Result<(Option<String>, u64, bool, Vec<String>)> {
+    pub fn inspect(&mut self) -> Result<(Option<String>, u64, bool, Vec<String>, Option<String>)> {
         let response =
             self.send_request_with_retry(DebugRequest::Inspect, RequestClass::Inspect, true)?;
 
@@ -532,8 +542,9 @@ impl RemoteClient {
                 step_count,
                 paused,
                 call_stack,
+                pause_reason,
                 ..
-            } => Ok((function, step_count, paused, call_stack)),
+            } => Ok((function, step_count, paused, call_stack, pause_reason)),
             DebugResponse::Error { message } => Err(DebuggerError::ExecutionError(message).into()),
             _ => Err(
                 DebuggerError::ExecutionError("Unexpected response to Inspect".to_string()).into(),
@@ -776,6 +787,7 @@ impl RemoteClient {
             protocol_max: 1,
             heartbeat_interval_ms: Some(30000),
             idle_timeout_ms: Some(60000),
+            session_label: self.config.session_label.clone(),
         };
         // Use a standard timeout for handshake during reconnect
         let handshake_resp = self
