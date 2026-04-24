@@ -1,4 +1,5 @@
 use crate::debugger::engine::DebuggerEngine;
+use crate::inspector::{StorageInspector, storage::StorageQuery};
 use crate::inspector::BudgetInspector;
 use crate::Result;
 use std::io::{self, Write};
@@ -7,6 +8,25 @@ use std::io::{self, Write};
 struct PendingExecution {
     function: String,
     args: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct StorageDisplayOptions {
+    filter: Option<String>,
+    jump_to: Option<String>,
+    page: usize,
+    page_size: usize,
+}
+
+impl Default for StorageDisplayOptions {
+    fn default() -> Self {
+        Self {
+            filter: None,
+            jump_to: None,
+            page: 1,
+            page_size: 25,
+        }
+    }
 }
 
 /// Terminal user interface for interactive debugging.
@@ -153,7 +173,8 @@ impl DebuggerUI {
                 }
             }
             "storage" => {
-                self.display_storage()?;
+                let options = Self::parse_storage_display_options(&parts[1..])?;
+                self.display_storage(&options)?;
             }
             "stack" => {
                 if let Ok(state) = self.engine.state().lock() {
@@ -251,7 +272,7 @@ impl DebuggerUI {
         }
     }
 
-    fn display_storage(&self) -> Result<()> {
+    fn display_storage(&self, options: &StorageDisplayOptions) -> Result<()> {
         let entries = self.engine.executor().get_storage_snapshot()?;
 
         if entries.is_empty() {
@@ -259,22 +280,155 @@ impl DebuggerUI {
             return Ok(());
         }
 
+        let sorted_entries = StorageInspector::sorted_entries_from_map(&entries);
+        let query = StorageQuery {
+            filter: options.filter.clone(),
+            jump_to: options.jump_to.clone(),
+            page: options.page.saturating_sub(1),
+            page_size: options.page_size,
+        };
+        let page = StorageInspector::build_page(&sorted_entries, &query);
+
         crate::logging::log_display("", crate::logging::LogLevel::Info);
         crate::logging::log_display("=== Contract Storage ===", crate::logging::LogLevel::Info);
+        crate::logging::log_display(
+            format!(
+                "Page {}/{}  showing {} of {} filtered entries ({} total)",
+                page.page + 1,
+                page.total_pages,
+                page.entries.len(),
+                page.filtered_entries,
+                page.total_entries
+            ),
+            crate::logging::LogLevel::Info,
+        );
+        if let Some(filter) = query.normalized_filter() {
+            crate::logging::log_display(
+                format!("Filter: {}", filter),
+                crate::logging::LogLevel::Info,
+            );
+        }
+        if let Some(jump) = query.normalized_jump() {
+            let jump_status = if let Some(index) = page.jump_match_index {
+                format!("Jump target: {} (matched entry #{})", jump, index + 1)
+            } else {
+                format!("Jump target: {} (no match found)", jump)
+            };
+            crate::logging::log_display(jump_status, crate::logging::LogLevel::Info);
+        }
         crate::logging::log_display("", crate::logging::LogLevel::Info);
 
-        let mut items: Vec<_> = entries.iter().collect();
-        items.sort_by_key(|(ka, _)| *ka);
-
-        for (key, value) in items {
+        if page.entries.is_empty() {
             crate::logging::log_display(
-                format!("  {}: {}", key, value),
+                "No storage entries matched the current view",
+                crate::logging::LogLevel::Info,
+            );
+        }
+
+        for (offset, (key, value)) in page.entries.iter().enumerate() {
+            let absolute_index = page.page_start + offset + 1;
+            let prefix = if page.jump_match_index == Some(page.page_start + offset) {
+                ">"
+            } else {
+                " "
+            };
+            crate::logging::log_display(
+                format!("{} {:>4}. {}: {}", prefix, absolute_index, key, value),
                 crate::logging::LogLevel::Info,
             );
         }
         crate::logging::log_display("", crate::logging::LogLevel::Info);
 
         Ok(())
+    }
+
+    fn parse_storage_display_options(parts: &[&str]) -> Result<StorageDisplayOptions> {
+        let mut options = StorageDisplayOptions::default();
+        let mut index = 0;
+
+        while index < parts.len() {
+            match parts[index] {
+                "--page" => {
+                    index += 1;
+                    let value = parts.get(index).ok_or_else(|| {
+                        crate::DebuggerError::InvalidArguments(
+                            "storage --page requires a number".to_string(),
+                        )
+                    })?;
+                    options.page = value.parse::<usize>().map_err(|_| {
+                        crate::DebuggerError::InvalidArguments(format!(
+                            "invalid storage page '{}'",
+                            value
+                        ))
+                    })?;
+                    if options.page == 0 {
+                        return Err(crate::DebuggerError::InvalidArguments(
+                            "storage --page must be at least 1".to_string(),
+                        )
+                        .into());
+                    }
+                }
+                "--page-size" => {
+                    index += 1;
+                    let value = parts.get(index).ok_or_else(|| {
+                        crate::DebuggerError::InvalidArguments(
+                            "storage --page-size requires a number".to_string(),
+                        )
+                    })?;
+                    options.page_size = value.parse::<usize>().map_err(|_| {
+                        crate::DebuggerError::InvalidArguments(format!(
+                            "invalid storage page size '{}'",
+                            value
+                        ))
+                    })?;
+                    if options.page_size == 0 {
+                        return Err(crate::DebuggerError::InvalidArguments(
+                            "storage --page-size must be at least 1".to_string(),
+                        )
+                        .into());
+                    }
+                }
+                "--jump" => {
+                    index += 1;
+                    let value = parts.get(index).ok_or_else(|| {
+                        crate::DebuggerError::InvalidArguments(
+                            "storage --jump requires a key or prefix".to_string(),
+                        )
+                    })?;
+                    options.jump_to = Some((*value).to_string());
+                }
+                "--filter" => {
+                    index += 1;
+                    let value = parts.get(index).ok_or_else(|| {
+                        crate::DebuggerError::InvalidArguments(
+                            "storage --filter requires a query".to_string(),
+                        )
+                    })?;
+                    options.filter = Some((*value).to_string());
+                }
+                other if other.starts_with("--") => {
+                    return Err(crate::DebuggerError::InvalidArguments(format!(
+                        "unknown storage option '{}'",
+                        other
+                    ))
+                    .into());
+                }
+                other => {
+                    if options.filter.is_some() {
+                        return Err(crate::DebuggerError::InvalidArguments(format!(
+                            "unexpected extra storage argument '{}'",
+                            other
+                        ))
+                        .into());
+                    }
+                    options.filter = Some(other.to_string());
+                }
+            }
+
+            index += 1;
+        }
+
+        Ok(options)
     }
 
     fn print_help(&self) {
@@ -299,7 +453,7 @@ impl DebuggerUI {
             crate::logging::LogLevel::Info,
         );
         crate::logging::log_display(
-            "  storage            Show current contract storage",
+            "  storage [query] [--page N] [--page-size N] [--jump KEY]",
             crate::logging::LogLevel::Info,
         );
         crate::logging::log_display(
