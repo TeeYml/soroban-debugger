@@ -237,7 +237,6 @@ pub enum DebugRequest {
     ResolveSourceBreakpoints {
         source_path: String,
         lines: Vec<u32>,
-        exported_functions: Vec<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_forward_line_adjust: Option<u32>,
     },

@@ -600,18 +600,14 @@ impl DebugServer {
                 DebugRequest::ResolveSourceBreakpoints {
                     source_path,
                     lines,
-                    exported_functions,
                     max_forward_line_adjust,
                 } => match (self.engine.as_ref(), self.contract_wasm.as_deref()) {
                     (Some(engine), Some(wasm_bytes)) => {
                         if let Some(source_map) = engine.source_map() {
-                            let exported: HashSet<String> =
-                                exported_functions.into_iter().collect();
                             let breakpoints = source_map.resolve_source_breakpoints(
                                 wasm_bytes,
                                 Path::new(&source_path),
                                 &lines,
-                                &exported,
                                 max_forward_line_adjust,
                             );
                             DebugResponse::SourceBreakpointsResolved { breakpoints }

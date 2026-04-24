@@ -215,7 +215,7 @@ type DebugRequest =
   | { type: 'GetStorage' }
   | { type: 'SetBreakpoint'; id?: string; function: string; condition?: string; hit_condition?: string; log_message?: string }
   | { type: 'ClearBreakpoint'; id?: string; function?: string }
-  | { type: 'ResolveSourceBreakpoints'; source_path: string; lines: number[]; exported_functions: string[] }
+  | { type: 'ResolveSourceBreakpoints'; source_path: string; lines: number[] }
   | { type: 'Evaluate'; expression: string; frame_id?: number }
   | { type: 'Cancel' }
   | { type: 'Ping' }
@@ -782,7 +782,6 @@ export class DebuggerProcess {
   async resolveSourceBreakpoints(
     sourcePath: string,
     lines: number[],
-    exportedFunctions: Set<string>,
     options?: RequestOptions,
   ): Promise<
     Array<{
@@ -799,7 +798,6 @@ export class DebuggerProcess {
         type: "ResolveSourceBreakpoints",
         source_path: sourcePath,
         lines,
-        exported_functions: Array.from(exportedFunctions),
       },
       options,
     );
@@ -813,7 +811,6 @@ export class DebuggerProcess {
       functionName: bp.function,
       reasonCode: bp.reason_code,
       message: bp.message,
-      setBreakpoint: shouldPromoteToFunctionBreakpoint(bp.verified, bp.function, bp.reason_code),
     }));
   }
 
