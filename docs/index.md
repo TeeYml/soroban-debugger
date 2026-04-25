@@ -5,6 +5,7 @@ Welcome to the Soroban Debugger documentation. This index helps you navigate the
 ## 🏁 Getting Started
 - [Getting Started Guide](getting-started.md) — Your first steps with the debugger.
 - [First Debug Session](tutorials/first-debug.md) — A step-by-step walkthrough.
+- [VS Code Extension Setup](tutorials/vscode-extension-setup.md) — Install the extension, write `launch.json`, and set your first breakpoints.
 - [Installation Guide](installation.md) — Detailed installation instructions for all platforms.
 
 ## 🛠️ Core Features
@@ -39,5 +40,6 @@ Welcome to the Soroban Debugger documentation. This index helps you navigate the
 
 ## 📄 Reference
 - [CLI Command Index](cli-command-groups.md) — Detailed reference for all CLI subcommands.
+- [Benchmark Regression Policy](performance-regressions.md) — CI baseline comparison and coverage parser self-test behavior.
 - [Trace JSON Schema](trace-schema.md) — Format of exported execution traces.
 - [Plugin API](plugin-api.md) — Documentation for the debugger plugin system.
