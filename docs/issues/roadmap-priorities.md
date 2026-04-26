@@ -114,7 +114,7 @@ useful order instead of re-triaging the whole epic every time.
 | I-049 | Write TUI (`soroban-debug tui`) tutorial | P2 | M | Docs | — | 3 |
 | I-050 | Write upgrade-check workflow tutorial | P2 | M | Docs | I-034 | 3 |
 | I-051 | Write REPL tutorial | P2 | M | Docs | — | 3 |
-| I-052 | Write remote debugging in CI tutorial | P2 | L | Docs | I-024, I-048 | 3 |
+| I-052 | ~Write remote debugging in CI tutorial~ | P2 | L | Docs | I-024, I-048 | 3 |
 
 ### Section E — Contributor Workflow
 

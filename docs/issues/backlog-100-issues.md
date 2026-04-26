@@ -108,7 +108,7 @@ Roadmap view: [Section D priorities](roadmap-priorities.md#section-d--tutorials)
 - **I-049** `[DOC]` No tutorial covers using the TUI (`soroban-debug tui`) — the feature is mentioned in the command index but has no guide.
 - **I-050** `[DOC]` No tutorial covers the upgrade-check workflow (building two WASM versions, running the check, interpreting Safe/Caution/Breaking output).
 - **I-051** `[DOC]` No tutorial covers the REPL (`soroban-debug repl`) — how to enter it, issue commands, and exit.
-- **I-052** `[DOC]` No tutorial covers remote debugging in a CI environment (the typical DevOps use case beyond the local SSH-tunnel workaround).
+- **I-052** ~`[DOC]` No tutorial covers remote debugging in a CI environment (the typical DevOps use case beyond the local SSH-tunnel workaround).~
 
 ---
 
