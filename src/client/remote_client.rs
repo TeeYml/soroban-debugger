@@ -58,9 +58,7 @@ pub struct RemoteClientConfig {
     pub tls_cert: Option<PathBuf>,
     pub tls_key: Option<PathBuf>,
     pub tls_ca: Option<PathBuf>,
-    /// If set, the client will declare these as required during handshake.
-    /// The server will reject the connection if it cannot satisfy all of them.
-    pub required_capabilities: Option<crate::server::protocol::ServerCapabilities>,
+    pub session_label: Option<String>,
 }
 
 impl Default for RemoteClientConfig {
@@ -74,7 +72,7 @@ impl Default for RemoteClientConfig {
             tls_cert: None,
             tls_key: None,
             tls_ca: None,
-            required_capabilities: None,
+            session_label: None,
         }
     }
 }
@@ -94,6 +92,21 @@ impl RemoteClientConfig {
     }
 }
 
+/// Information returned by a successful session reconnection.
+#[derive(Debug, Clone)]
+pub struct ReconnectInfo {
+    /// The session identifier for the reconnected session.
+    pub session_id: String,
+    /// Whether the debugger is currently paused at a breakpoint.
+    pub paused: bool,
+    /// The function currently being debugged, if any.
+    pub current_function: Option<String>,
+    /// List of active breakpoint identifiers in the session.
+    pub breakpoints: Vec<String>,
+    /// Total number of execution steps taken so far.
+    pub step_count: u64,
+}
+
 /// Remote client for connecting to a debug server
 #[derive(Debug)]
 pub struct RemoteClient {
@@ -103,11 +116,13 @@ pub struct RemoteClient {
     message_id: u64,
     authenticated: bool,
     config: RemoteClientConfig,
-    /// Capabilities advertised by the server during handshake.
-    /// `None` until handshake completes (i.e. while connecting).
-    pub negotiated_capabilities: Option<crate::server::protocol::ServerCapabilities>,
-    /// Protocol version selected during handshake.
-    pub selected_protocol_version: Option<u32>,
+    /// Session identifier received from the server during the initial handshake.
+    /// Used to reconnect to an existing session after a transient disconnect.
+    session_id: Option<String>,
+    /// The protocol version selected during the handshake.
+    selected_protocol_version: Option<u32>,
+    /// Metadata about the current session received from the server.
+    session_info: Option<crate::server::protocol::RemoteSessionInfo>,
 }
 
 #[derive(Debug)]
@@ -178,8 +193,9 @@ impl RemoteClient {
             message_id: 0,
             authenticated: token.is_none(),
             config,
-            negotiated_capabilities: None,
+            session_id: None,
             selected_protocol_version: None,
+            session_info: None,
         };
 
         client.handshake("rust-remote-client", env!("CARGO_PKG_VERSION"))?;
@@ -344,7 +360,8 @@ impl RemoteClient {
             protocol_max: PROTOCOL_MAX_VERSION,
             heartbeat_interval_ms: self.config.heartbeat_interval_ms,
             idle_timeout_ms: self.config.idle_timeout_ms,
-            required_capabilities: self.config.required_capabilities.clone(),
+            session_label: self.config.session_label.clone(),
+            reconnect_session_id: None,
         })?;
 
         match response {
@@ -380,6 +397,10 @@ impl RemoteClient {
                     .into(),
             ),
         }
+    }
+
+    pub fn session_info(&self) -> Option<&crate::server::protocol::RemoteSessionInfo> {
+        self.session_info.as_ref()
     }
 
     /// Authenticate with the server
@@ -491,6 +512,7 @@ impl RemoteClient {
                 paused,
                 current_function,
                 step_count,
+                pause_reason: _,
                 ..
             } => Ok((paused, current_function, step_count)),
             DebugResponse::Error { message } => Err(DebuggerError::ExecutionError(message).into()),
@@ -509,6 +531,7 @@ impl RemoteClient {
                 paused,
                 current_function,
                 step_count,
+                pause_reason: _,
                 ..
             } => Ok((paused, current_function, step_count)),
             DebugResponse::Error { message } => Err(DebuggerError::ExecutionError(message).into()),
@@ -527,6 +550,7 @@ impl RemoteClient {
                 paused,
                 current_function,
                 step_count,
+                pause_reason: _,
                 ..
             } => Ok((paused, current_function, step_count)),
             DebugResponse::Error { message } => Err(DebuggerError::ExecutionError(message).into()),
@@ -550,7 +574,7 @@ impl RemoteClient {
     }
 
     /// Inspect current state
-    pub fn inspect(&mut self) -> Result<(Option<String>, u64, bool, Vec<String>)> {
+    pub fn inspect(&mut self) -> Result<(Option<String>, u64, bool, Vec<String>, Option<String>)> {
         let response =
             self.send_request_with_retry(DebugRequest::Inspect, RequestClass::Inspect, true)?;
 
@@ -560,8 +584,9 @@ impl RemoteClient {
                 step_count,
                 paused,
                 call_stack,
+                pause_reason,
                 ..
-            } => Ok((function, step_count, paused, call_stack)),
+            } => Ok((function, step_count, paused, call_stack, pause_reason)),
             DebugResponse::Error { message } => Err(DebuggerError::ExecutionError(message).into()),
             _ => Err(
                 DebuggerError::ExecutionError("Unexpected response to Inspect".to_string()).into(),
@@ -806,19 +831,107 @@ impl RemoteClient {
             protocol_max: 1,
             heartbeat_interval_ms: Some(30000),
             idle_timeout_ms: Some(60000),
-            required_capabilities: self.config.required_capabilities.clone(),
+            session_label: self.config.session_label.clone(),
+            reconnect_session_id: self.session_id.clone(),
         };
         // Use a standard timeout for handshake during reconnect
-        let _ = self
+        let handshake_resp = self
             .send_request_once(handshake, Duration::from_secs(5))
             .map_err(|e| {
                 DebuggerError::ExecutionError(format!("Handshake failed during reconnect: {:?}", e))
             })?;
 
+        // Capture session_id from reconnect handshake
+        if let DebugResponse::HandshakeAck { session_id, .. } = &handshake_resp {
+            self.session_id = Some(session_id.clone());
+        }
+
         if let Some(token) = self.token.clone() {
             self.authenticate(&token)?;
         }
+
+        // If we have a stored session_id, attempt to reconnect to the existing session
+        if let Some(ref sid) = self.session_id.clone() {
+            match self.send_request(DebugRequest::Reconnect {
+                session_id: sid.clone(),
+            }) {
+                Ok(DebugResponse::ReconnectAck { .. }) => {
+                    info!("Successfully reconnected to session {}", sid);
+                }
+                Ok(DebugResponse::SessionExpired { message }) => {
+                    info!("Session expired during reconnect: {}", message);
+                    self.session_id = None;
+                }
+                Ok(_) | Err(_) => {
+                    // Server may not support Reconnect; that's fine — treat as fresh connection
+                    info!("Reconnect request not accepted; continuing with fresh connection");
+                }
+            }
+        }
+
         Ok(())
+    }
+
+    /// Explicitly reconnect to an existing session by session ID.
+    /// Returns the reconnection acknowledgment on success, or an error if the
+    /// session is expired or the server does not support reconnection.
+    pub fn reconnect_to_session(&mut self, session_id: &str) -> Result<ReconnectInfo> {
+        let stream = Self::create_stream(&self.addr, &self.config)?;
+        self.stream = BufReader::new(stream);
+        self.authenticated = self.token.is_none();
+
+        // Perform handshake
+        self.handshake("rust-remote-client", env!("CARGO_PKG_VERSION"))?;
+
+        // Authenticate if needed
+        if let Some(token) = self.token.clone() {
+            self.authenticate(&token)?;
+        }
+
+        // Send Reconnect request
+        let response = self.send_request(DebugRequest::Reconnect {
+            session_id: session_id.to_string(),
+        })?;
+
+        match response {
+            DebugResponse::ReconnectAck {
+                session_id,
+                paused,
+                current_function,
+                breakpoints,
+                step_count,
+            } => {
+                self.session_id = Some(session_id.clone());
+                info!("Reconnected to session {}", session_id);
+                Ok(ReconnectInfo {
+                    session_id,
+                    paused,
+                    current_function,
+                    breakpoints,
+                    step_count,
+                })
+            }
+            DebugResponse::SessionExpired { message } => {
+                self.session_id = None;
+                Err(DebuggerError::ExecutionError(format!(
+                    "Session expired: {}",
+                    message
+                ))
+                .into())
+            }
+            DebugResponse::Error { message } => {
+                Err(DebuggerError::ExecutionError(message).into())
+            }
+            _ => Err(DebuggerError::ExecutionError(
+                "Unexpected response to Reconnect".to_string(),
+            )
+            .into()),
+        }
+    }
+
+    /// Returns the session ID received from the server, if any.
+    pub fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
     }
 
     fn timeout_for_class(&self, class: RequestClass) -> Duration {

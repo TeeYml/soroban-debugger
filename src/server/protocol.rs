@@ -148,86 +148,12 @@ pub struct BreakpointDescriptor {
     pub log_message: Option<String>,
 }
 
-/// Feature flags the server advertises to the client during handshake.
-/// All fields default to `false` so older servers that don't populate
-/// the struct are treated as having no optional capabilities.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub struct ServerCapabilities {
-    /// Supports conditional and hit-count breakpoints.
-    pub conditional_breakpoints: bool,
-    /// Supports source-level (DWARF) breakpoints via ResolveSourceBreakpoints.
-    pub source_breakpoints: bool,
-    /// Supports the Evaluate request for expression inspection.
-    pub evaluate: bool,
-    /// Supports TLS-encrypted connections.
-    pub tls: bool,
-    /// Supports token-based authentication.
-    pub token_auth: bool,
-    /// Supports heartbeat/idle-timeout negotiation.
-    pub session_lifecycle: bool,
-    /// Supports repeat execution via repeat_count.
-    pub repeat_execution: bool,
-    /// Supports the symbolic analysis command.
-    pub symbolic_analysis: bool,
-    /// Supports loading network snapshots via LoadSnapshot.
-    pub snapshot_loading: bool,
-    /// Supports the GetEvents / DynamicTrace command.
-    pub dynamic_trace_events: bool,
-}
-
-impl ServerCapabilities {
-    /// Builds the full capability set for this server build.
-    pub fn current() -> Self {
-        Self {
-            conditional_breakpoints: true,
-            source_breakpoints: true,
-            evaluate: true,
-            tls: true,
-            token_auth: true,
-            session_lifecycle: true,
-            repeat_execution: true,
-            symbolic_analysis: false, // opt-in; requires extra feature flag
-            snapshot_loading: true,
-            dynamic_trace_events: true,
-        }
-    }
-
-    /// Returns the capability names that are present in `self` but absent in `other`.
-    /// Used to tell the client which features it requested that the server doesn't support.
-    pub fn unsupported_by(&self, other: &ServerCapabilities) -> Vec<&'static str> {
-        let mut missing = Vec::new();
-        if self.conditional_breakpoints && !other.conditional_breakpoints {
-            missing.push("conditional_breakpoints");
-        }
-        if self.source_breakpoints && !other.source_breakpoints {
-            missing.push("source_breakpoints");
-        }
-        if self.evaluate && !other.evaluate {
-            missing.push("evaluate");
-        }
-        if self.tls && !other.tls {
-            missing.push("tls");
-        }
-        if self.token_auth && !other.token_auth {
-            missing.push("token_auth");
-        }
-        if self.session_lifecycle && !other.session_lifecycle {
-            missing.push("session_lifecycle");
-        }
-        if self.repeat_execution && !other.repeat_execution {
-            missing.push("repeat_execution");
-        }
-        if self.symbolic_analysis && !other.symbolic_analysis {
-            missing.push("symbolic_analysis");
-        }
-        if self.snapshot_loading && !other.snapshot_loading {
-            missing.push("snapshot_loading");
-        }
-        if self.dynamic_trace_events && !other.dynamic_trace_events {
-            missing.push("dynamic_trace_events");
-        }
-        missing
-    }
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteSessionInfo {
+    pub session_id: String,
+    pub created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 /// Wire protocol messages for remote debugging
@@ -244,9 +170,10 @@ pub enum DebugRequest {
         heartbeat_interval_ms: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         idle_timeout_ms: Option<u32>,
-        /// Capabilities the client requires. Server rejects connection if any are unsupported.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        required_capabilities: Option<ServerCapabilities>,
+        session_label: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reconnect_session_id: Option<String>,
     },
 
     /// Authenticate with the server
@@ -312,7 +239,6 @@ pub enum DebugRequest {
     ResolveSourceBreakpoints {
         source_path: String,
         lines: Vec<u32>,
-        exported_functions: Vec<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_forward_line_adjust: Option<u32>,
     },
@@ -341,6 +267,12 @@ pub enum DebugRequest {
     /// Cancel a running execution
     Cancel,
 
+    /// Reconnect to an existing session after a transient disconnect.
+    /// The client provides the session_id it received from a previous HandshakeAck.
+    Reconnect {
+        session_id: String,
+    },
+
     /// Catch-all for forward compatibility
     #[serde(other)]
     Unknown,
@@ -357,12 +289,18 @@ pub enum DebugResponse {
         protocol_min: u32,
         protocol_max: u32,
         selected_version: u32,
+        session_id: String,
+        session_created_at: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_label: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         heartbeat_interval_ms: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         idle_timeout_ms: Option<u32>,
-        /// The full capability set this server instance supports.
-        server_capabilities: ServerCapabilities,
+        /// Opaque session identifier the client can use to reconnect after a
+        /// transient disconnect. Absent on servers that do not support reconnection.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reconnect_id: Option<String>,
     },
 
     /// Handshake failed due to protocol mismatch.
@@ -397,6 +335,8 @@ pub enum DebugResponse {
         paused: bool,
         completed: bool,
         source_location: Option<SourceLocation>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pause_reason: Option<String>,
     },
 
     /// Step result
@@ -405,6 +345,8 @@ pub enum DebugResponse {
         current_function: Option<String>,
         step_count: u64,
         source_location: Option<SourceLocation>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pause_reason: Option<String>,
     },
 
     /// Source-level step-over result
@@ -422,6 +364,22 @@ pub enum DebugResponse {
         error: Option<String>,
         paused: bool,
         source_location: Option<SourceLocation>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pause_reason: Option<String>,
+    },
+
+    /// Acknowledgment of a successful session reconnection.
+    ReconnectAck {
+        session_id: String,
+        paused: bool,
+        current_function: Option<String>,
+        breakpoints: Vec<String>,
+        step_count: u64,
+    },
+
+    /// Reconnection failed because the session has expired or been purged.
+    SessionExpired {
+        message: String,
     },
 
     /// Inspection result
@@ -432,6 +390,8 @@ pub enum DebugResponse {
         paused: bool,
         call_stack: Vec<String>,
         source_location: Option<SourceLocation>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pause_reason: Option<String>,
     },
 
     /// Storage state

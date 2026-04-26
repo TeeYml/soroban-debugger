@@ -34,6 +34,7 @@ pub enum ReplCommand {
         function: String,
     },
     Functions,
+    Palette,
 }
 
 impl ReplCommand {
@@ -51,7 +52,21 @@ impl ReplCommand {
             "list-breaks",
             "clear-break",
             "functions",
+            "palette",
         ]
+    }
+
+    /// Returns true if the command contains sensitive data (e.g. tokens, keys)
+    /// and should be excluded from persistent history.
+    pub fn is_sensitive(&self) -> bool {
+        match self {
+            ReplCommand::Call { args, .. } => args.iter().any(|arg| {
+                let lower = arg.to_lowercase();
+                lower.contains("secret") || lower.contains("token") 
+                    || lower.contains("key") || lower.contains("password")
+            }),
+            _ => false,
+        }
     }
 
     /// Parse a command string into a ReplCommand
@@ -101,6 +116,7 @@ impl ReplCommand {
             "functions" => Ok(ReplCommand::Functions),
             "clear" => Ok(ReplCommand::Clear),
             "help" => Ok(ReplCommand::Help),
+            "palette" => Ok(ReplCommand::Palette),
             "exit" | "quit" => Ok(ReplCommand::Exit),
             _ => Err(miette::miette!(
                 "Unknown command: '{}'. Type 'help' for available commands.",

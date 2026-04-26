@@ -25,6 +25,37 @@ mod config {
 }
 
 #[allow(dead_code)]
+mod debugger {
+    pub mod breakpoint {
+        pub struct BreakpointSpec {
+            pub id: String,
+            pub function: String,
+            pub condition: Option<String>,
+            pub hit_condition: Option<String>,
+            pub log_message: Option<String>,
+        }
+    }
+}
+
+#[allow(dead_code)]
+mod analyzer {
+    pub mod security {
+        pub enum Severity {
+            Low,
+            Medium,
+            High,
+        }
+    }
+    pub mod symbolic {
+        pub enum SymbolicProfile {
+            Fast,
+            Balanced,
+            Deep,
+        }
+    }
+}
+
+#[allow(dead_code)]
 #[path = "src/cli/args.rs"]
 mod args;
 
