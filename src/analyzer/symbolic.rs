@@ -15,6 +15,8 @@ pub struct PathResult {
     pub return_value: Option<String>,
     pub panic: Option<String>,
     pub path_decisions: Vec<crate::server::protocol::DynamicTraceEvent>,
+    pub severity: String,
+    pub rule_mappings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -26,7 +28,7 @@ pub struct SymbolicReport {
     pub metadata: SymbolicReportMetadata,
 }
 
-#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
 pub struct SymbolicConfig {
     pub max_paths: usize,
     pub max_input_combinations: usize,
@@ -41,6 +43,7 @@ pub struct SymbolicConfig {
     /// This allows testing how different storage states affect contract behavior.
     /// The storage is a map of key-value pairs.
     pub storage_seed: Option<String>,
+    pub storage_read_pressure_threshold: Option<f64>,
 }
 
 impl Default for SymbolicConfig {
@@ -59,6 +62,7 @@ impl SymbolicConfig {
             max_depth: 3,
             seed: None,
             storage_seed: None,
+            storage_read_pressure_threshold: Some(0.8),
         }
     }
     pub const fn fast() -> Self {
@@ -70,6 +74,7 @@ impl SymbolicConfig {
             max_depth: 2,
             seed: None,
             storage_seed: None,
+            storage_read_pressure_threshold: Some(0.8),
         }
     }
 
@@ -86,6 +91,7 @@ impl SymbolicConfig {
             max_depth: 5,
             seed: None,
             storage_seed: None,
+            storage_read_pressure_threshold: Some(0.8),
         }
     }
 }
@@ -202,12 +208,73 @@ impl SymbolicAnalyzer {
         Self
     }
 
+
+
+    fn grade_path(
+        outcome: &std::result::Result<String, String>,
+        path_decisions: &[crate::server::protocol::DynamicTraceEvent],
+        config: &SymbolicConfig,
+    ) -> (String, Vec<String>) {
+        use crate::server::protocol::DynamicTraceEventKind;
+        let mut severity = "Informational".to_string();
+        let mut rules = Vec::new();
+
+        if let Err(err_str) = outcome {
+            severity = "Suspicious".to_string();
+            rules.push("ERR-001: Execution Panic".to_string());
+
+            // Heuristic for high severity arithmetic issues
+            if err_str.contains("Arithmetic")
+                || err_str.contains("overflow")
+                || err_str.contains("underflow")
+            {
+                severity = "Release-Blocking".to_string();
+                rules.push("SEC-002: Arithmetic Safety Violation".to_string());
+            }
+        }
+
+        // Check for storage read pressure
+        let storage_reads = path_decisions
+            .iter()
+            .filter(|e| matches!(e.kind, DynamicTraceEventKind::StorageRead))
+            .count();
+        if let Some(threshold) = config.storage_read_pressure_threshold {
+            if storage_reads as f64 > threshold {
+                severity = if severity == "Informational" {
+                    "Suspicious".to_string()
+                } else {
+                    severity
+                };
+                rules.push("PERF-001: High Storage Read Pressure".to_string());
+            }
+        }
+
+        // Check for missing authorization on sensitive paths
+        let has_auth = path_decisions
+            .iter()
+            .any(|e| matches!(e.kind, DynamicTraceEventKind::Authorization));
+        let has_write = path_decisions
+            .iter()
+            .any(|e| matches!(e.kind, DynamicTraceEventKind::StorageWrite));
+        if has_write && !has_auth {
+            severity = if severity == "Release-Blocking" {
+                severity
+            } else {
+                "Suspicious".to_string()
+            };
+            rules.push("SEC-003: Unauthenticated Storage Write".to_string());
+        }
+
+        (severity, rules)
+    }
+
     fn record_outcome(
         report: &mut SymbolicReport,
         seen_inputs: &mut HashSet<String>,
         inputs: &str,
         outcome: std::result::Result<String, String>,
         path_decisions: Vec<crate::server::protocol::DynamicTraceEvent>,
+        config: &SymbolicConfig,
     ) {
         // Keep distinct paths even when outputs/errors are identical.
         // Only dedupe when the exact same input set is re-encountered.
@@ -215,12 +282,16 @@ impl SymbolicAnalyzer {
             return;
         }
 
+        let (severity, rule_mappings) = Self::grade_path(&outcome, &path_decisions, config);
+
         match outcome {
             Ok(val) => report.paths.push(PathResult {
                 inputs: inputs.to_string(),
                 return_value: Some(val),
                 panic: None,
                 path_decisions,
+                severity,
+                rule_mappings,
             }),
             Err(err_str) => {
                 report.panics_found += 1;
@@ -229,6 +300,8 @@ impl SymbolicAnalyzer {
                     return_value: None,
                     panic: Some(err_str),
                     path_decisions,
+                    severity,
+                    rule_mappings,
                 });
             }
         }
@@ -339,9 +412,7 @@ impl SymbolicAnalyzer {
 
             match executor_res {
                 Ok(val) => {
-                    // Track the target function as reached
-                    reached_functions.insert(function.to_string());
-                    Self::record_outcome(&mut report, &mut seen_inputs, args_json, Ok(val), trace);
+                    Self::record_outcome(&mut report, &mut seen_inputs, args_json, Ok(val), trace, config);
                 }
                 Err(err) => {
                     // Track the target function as reached
@@ -352,6 +423,7 @@ impl SymbolicAnalyzer {
                         args_json,
                         Err(err.to_string()),
                         trace,
+                        config,
                     );
                 }
             }
@@ -1092,6 +1164,7 @@ mod tests {
             max_depth: 3,
             seed: None,
             storage_seed: None,
+            storage_read_pressure_threshold: Some(0.8),
         };
 
         let report = analyzer
@@ -1147,6 +1220,7 @@ mod tests {
             max_depth: 3,
             seed: Some(99),
             storage_seed: None,
+            storage_read_pressure_threshold: Some(0.8),
         };
         let config_b = SymbolicConfig {
             seed: Some(99),
@@ -1181,6 +1255,7 @@ mod tests {
             max_depth: 3,
             seed: None,
             storage_seed: None,
+            storage_read_pressure_threshold: Some(0.8),
         };
 
         let report = analyzer
@@ -1307,6 +1382,7 @@ mod tests {
             max_depth: 3,
             seed: None,
             storage_seed: Some(r#"{"counter": 100}"#.to_string()),
+            storage_read_pressure_threshold: Some(0.8),
         };
 
         // The test verifies that the config accepts a storage seed.

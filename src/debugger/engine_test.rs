@@ -3,7 +3,7 @@ use super::DebuggerEngine;
 fn create_test_engine() -> DebuggerEngine {
     let wasm_bytes = include_bytes!("../../tests/fixtures/wasm/echo.wasm").to_vec();
     let executor = crate::runtime::executor::ContractExecutor::new(wasm_bytes).unwrap();
-    DebuggerEngine::new(executor, vec![])
+    DebuggerEngine::new(executor, vec![], vec![])
 }
 
 #[test]

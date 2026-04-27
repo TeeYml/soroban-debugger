@@ -203,6 +203,13 @@ fn main() -> miette::Result<()> {
                 .map_err(|e: std::io::Error| miette::miette!(e))
                 .and_then(|rt| rt.block_on(soroban_debugger::cli::commands::repl(args)))
         }
+        Some(Commands::PluginTrustReport(args)) => {
+            soroban_debugger::cli::commands::plugin_trust_report(args)
+        }
+        Some(Commands::PluginInspect(args)) => {
+            soroban_debugger::cli::commands::plugin_inspect(args)
+        }
+        Some(Commands::Doctor(args)) => soroban_debugger::cli::commands::doctor(args),
         Some(Commands::External(argv)) => {
             if argv.is_empty() {
                 return Err(miette::miette!("Missing plugin subcommand"));
@@ -323,6 +330,7 @@ fn main() -> miette::Result<()> {
     };
 
     if let Err(err) = result {
+        let err: miette::Report = err;
         if run_json_output_requested {
             let mut message = err.to_string();
             if let Some(help) = err.help() {

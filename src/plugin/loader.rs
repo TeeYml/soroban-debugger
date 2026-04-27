@@ -14,6 +14,24 @@ pub struct PluginRuntimeDescriptor {
     pub trusted: bool,
 }
 
+/// Policy governing what capabilities a plugin is allowed to register or use
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PluginSandboxPolicy {
+    pub allow_command_registration: bool,
+    pub allow_formatter_registration: bool,
+    pub allow_execution_hooks: bool,
+}
+
+impl Default for PluginSandboxPolicy {
+    fn default() -> Self {
+        Self {
+            allow_command_registration: true,
+            allow_formatter_registration: true,
+            allow_execution_hooks: true,
+        }
+    }
+}
+
 /// A loaded plugin instance
 pub struct LoadedPlugin {
     /// The plugin instance
@@ -92,6 +110,9 @@ pub struct PluginLoader {
 
     /// Trust policy used before dynamic loading
     trust_policy: PluginTrustPolicy,
+
+    /// Sandbox policy used for capability containment
+    sandbox_policy: PluginSandboxPolicy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,6 +175,19 @@ impl PluginLoader {
         Self {
             plugin_dir,
             trust_policy,
+            sandbox_policy: PluginSandboxPolicy::default(),
+        }
+    }
+
+    pub fn with_policies(
+        plugin_dir: PathBuf,
+        trust_policy: PluginTrustPolicy,
+        sandbox_policy: PluginSandboxPolicy,
+    ) -> Self {
+        Self {
+            plugin_dir,
+            trust_policy,
+            sandbox_policy,
         }
     }
 
@@ -328,6 +362,14 @@ impl PluginLoader {
         library_path: &Path,
         library_bytes: &[u8],
     ) -> PluginResult<PluginTrustAssessment> {
+        // Enforce sandbox policy on plugin capabilities BEFORE trust checks
+        if !self.sandbox_policy.allow_command_registration && manifest.capabilities.provides_commands {
+            return Err(PluginError::SandboxViolation(format!(
+                "Plugin '{}' requires command registration which is disabled by the current sandbox policy.",
+                manifest.name
+            )));
+        }
+
         if self.trust_policy.mode == PluginTrustMode::Off {
             return Ok(PluginTrustAssessment {
                 trusted: true,
@@ -664,5 +706,26 @@ mod tests {
         );
         let result_ok = check_api_version(PLUGIN_API_VERSION);
         assert!(result_ok.is_ok());
+    }
+
+    #[test]
+    fn sandbox_policy_blocks_command_registration() {
+        let mut sandbox = PluginSandboxPolicy::default();
+        sandbox.allow_command_registration = false;
+        
+        let loader = PluginLoader::with_policies(
+            std::env::temp_dir(),
+            PluginTrustPolicy::default(),
+            sandbox,
+        );
+
+        let mut manifest = base_manifest("command-plugin");
+        manifest.capabilities.provides_commands = true;
+
+        let err = loader
+            .assess_trust(&manifest, Path::new("command-plugin.so"), b"library")
+            .unwrap_err();
+
+        assert!(matches!(err, PluginError::SandboxViolation(msg) if msg.contains("command registration which is disabled")));
     }
 }

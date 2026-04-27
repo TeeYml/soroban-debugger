@@ -3,7 +3,9 @@
 //! Supports `NO_COLOR` (disable ANSI colors) and `--no-unicode` (ASCII-only output).
 
 use serde::{Deserialize, Serialize};
+use std::fmt::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
+use crate::inspector::budget::{BudgetInspector, ResourceCheckpoint};
 
 static NO_UNICODE: AtomicBool = AtomicBool::new(false);
 static COLORS_ENABLED: AtomicBool = AtomicBool::new(true);
@@ -14,6 +16,67 @@ pub const SCHEMA_VERSION: &str = "1.0.0";
 pub enum OutputStatus {
     Success,
     Error,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticSeverity {
+    Notice,
+    Warning,
+    Error,
+}
+
+impl DiagnosticSeverity {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Notice => "NOTICE",
+            Self::Warning => "WARN",
+            Self::Error => "ERROR",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DiagnosticRecord {
+    pub source: String,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    pub severity: DiagnosticSeverity,
+}
+
+impl DiagnosticRecord {
+    pub fn new(
+        source: impl Into<String>,
+        summary: impl Into<String>,
+        detail: Option<String>,
+        severity: DiagnosticSeverity,
+    ) -> Self {
+        Self {
+            source: source.into(),
+            summary: summary.into(),
+            detail,
+            severity,
+        }
+    }
+
+    pub fn display_line(&self) -> String {
+        match &self.detail {
+            Some(detail) if !detail.is_empty() => format!(
+                "[{}] {}: {} ({})",
+                self.severity.label(),
+                self.source,
+                self.summary,
+                detail
+            ),
+            _ => format!(
+                "[{}] {}: {}",
+                self.severity.label(),
+                self.source,
+                self.summary
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -67,6 +130,8 @@ pub struct ReplayArtifactFile {
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compression: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -111,6 +176,161 @@ impl PluginIncidentReport {
             self.core_debugger_status
         )
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginReloadOutcome {
+    Success,
+    Failed,
+    RolledBack,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct PluginReloadReport {
+    pub plugin: String,
+    pub timestamp: String,
+    pub outcome: PluginReloadOutcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preserved_state_bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl PluginReloadReport {
+    pub fn summary_line(&self) -> String {
+        match self.outcome {
+            PluginReloadOutcome::Success => {
+                let size = self.preserved_state_bytes.map_or("unknown".to_string(), |b| format!("{} bytes", b));
+                format!("Plugin '{}' reloaded successfully. Preserved state: {}.", self.plugin, size)
+            }
+            PluginReloadOutcome::Failed => {
+                let reason = self.reason.as_deref().unwrap_or("unknown error");
+                format!("Plugin '{}' reload failed: {}.", self.plugin, reason)
+            }
+            PluginReloadOutcome::RolledBack => {
+                let reason = self.reason.as_deref().unwrap_or("unknown error");
+                format!("Plugin '{}' reload rolled back. Reason: {}.", self.plugin, reason)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum BatchResultKind {
+    Passed,
+    Failed,
+    Panicked,
+    TimedOut,
+    Skipped,
+    Error,
+}
+
+impl BatchResultKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Passed => "Passed",
+            Self::Failed => "Failed",
+            Self::Panicked => "Panicked",
+            Self::TimedOut => "Timed Out",
+            Self::Skipped => "Skipped",
+            Self::Error => "Error",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchResult {
+    pub label: String,
+    pub kind: BatchResultKind,
+    pub args: String,
+    pub result: Option<String>,
+    pub expected: Option<String>,
+    pub error: Option<String>,
+    pub duration_ms: u128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BatchSummary {
+    pub total: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub panicked: usize,
+    pub timed_out: usize,
+    pub skipped: usize,
+    pub errors: usize,
+    pub total_duration_ms: u128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchExecutionResult {
+    pub summary: BatchSummary,
+    pub results: Vec<BatchResult>,
+}
+
+pub fn collect_runtime_diagnostics(
+    source_map_loaded: bool,
+    budget: &crate::inspector::budget::BudgetInfo,
+    last_error: Option<&str>,
+) -> Vec<DiagnosticRecord> {
+    let mut diagnostics = Vec::new();
+
+    if !source_map_loaded {
+        diagnostics.push(DiagnosticRecord::new(
+            "source_map",
+            "Source locations are degraded for this session.",
+            Some(
+                "DWARF/source map data could not be loaded, so paused file and line hints may be unavailable."
+                    .to_string(),
+            ),
+            DiagnosticSeverity::Warning,
+        ));
+    }
+
+    for (resource, percentage) in [
+        ("CPU", budget.cpu_percentage()),
+        ("Memory", budget.memory_percentage()),
+    ] {
+        let severity = if percentage >= 90.0 {
+            Some(DiagnosticSeverity::Warning)
+        } else if percentage >= 70.0 {
+            Some(DiagnosticSeverity::Notice)
+        } else {
+            None
+        };
+
+        if let Some(severity) = severity {
+            let detail = if percentage >= 90.0 {
+                Some(format!(
+                    "{} usage is at {:.1}% of the configured limit. Consider reducing contract work or data size.",
+                    resource, percentage
+                ))
+            } else {
+                Some(format!(
+                    "{} usage is at {:.1}% of the configured limit.",
+                    resource, percentage
+                ))
+            };
+            diagnostics.push(DiagnosticRecord::new(
+                format!("budget/{}", resource.to_lowercase()),
+                format!("{} budget is running high.", resource),
+                detail,
+                severity,
+            ));
+        }
+    }
+
+    if let Some(error) = last_error.filter(|error| !error.trim().is_empty()) {
+        diagnostics.push(DiagnosticRecord::new(
+            "execution",
+            "The most recent debugger action failed.",
+            Some(error.to_string()),
+            DiagnosticSeverity::Error,
+        ));
+    }
+
+    diagnostics
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -282,26 +502,6 @@ impl OutputConfig {
     }
 }
 
-pub fn format_resource_timeline(timeline: &[crate::inspector::budget::ResourceCheckpoint]) -> String {
-    let mut out = String::new();
-    use std::fmt::Write;
-    
-    writeln!(out, "| Timestamp (ms) | CPU Instructions | Memory Bytes | Location |").unwrap();
-    writeln!(out, "|----------------|------------------|--------------|----------|").unwrap();
-    
-    for checkpoint in timeline {
-        writeln!(
-            out,
-            "| {} | {} | {} | {} |",
-            checkpoint.timestamp_ms,
-            checkpoint.cpu_instructions,
-            checkpoint.memory_bytes,
-            checkpoint.location_name
-        ).unwrap();
-    }
-    
-    out
-}
 
 /// Status kind for text-equivalent labels (screen reader friendly).
 #[derive(Clone, Copy)]
@@ -373,29 +573,6 @@ impl OutputWriter {
     }
 }
 
-/// Formats a resource timeline as a markdown table.
-pub fn format_resource_timeline(
-    timeline: &[crate::inspector::budget::ResourceCheckpoint],
-) -> String {
-    use std::fmt::Write;
-    let mut out = String::new();
-    let _ = writeln!(
-        out,
-        "| Time (ms) | CPU Instructions | Memory Bytes | Location |"
-    );
-    let _ = writeln!(
-        out,
-        "|-----------|------------------|--------------|----------|"
-    );
-    for point in timeline {
-        let _ = writeln!(
-            out,
-            "| {} | {} | {} | {} |",
-            point.timestamp_ms, point.cpu_instructions, point.memory_bytes, point.location_name
-        );
-    }
-    out
-}
 
 #[cfg(test)]
 mod tests {
@@ -465,4 +642,40 @@ mod tests {
         assert!(json.contains("metadata"));
         assert!(json.contains("contract.wasm"));
     }
+}
+
+/// Formats a resource usage timeline as a human-readable table.
+pub fn format_resource_timeline(
+    timeline: &[crate::inspector::budget::ResourceCheckpoint],
+) -> String {
+    let mut output = String::new();
+    let mut last_cpu = 0;
+    let mut last_mem = 0;
+
+    output.push_str("| Time | Location | Total CPU | CPU Delta | Total Mem | Mem Delta |\n");
+    output.push_str("|------|----------|-----------|-----------|-----------|-----------|\n");
+
+    for checkpoint in timeline {
+        let cpu_delta = checkpoint.cpu_instructions.saturating_sub(last_cpu);
+        let mem_delta = checkpoint.memory_bytes.saturating_sub(last_mem);
+
+        let _ = writeln!(
+            output,
+            "| {: >4}ms | {: <8} | {: >9} | {: >9} | {: >9} | {: >9} |",
+            checkpoint.timestamp_ms,
+            if checkpoint.location_name.len() > 8 {
+                &checkpoint.location_name[..8]
+            } else {
+                &checkpoint.location_name
+            },
+            checkpoint.cpu_instructions,
+            cpu_delta,
+            checkpoint.memory_bytes,
+            mem_delta
+        );
+
+        last_cpu = checkpoint.cpu_instructions;
+        last_mem = checkpoint.memory_bytes;
+    }
+    output
 }

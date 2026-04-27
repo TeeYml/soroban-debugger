@@ -99,10 +99,9 @@ pub struct SourceMap {
     pub units_with_line_program: usize,
 }
 
-/// Result of resolving a source breakpoint (file + line) to a concrete contract entrypoint breakpoint.
+/// Result of resolving a source breakpoint (file + line) to a concrete source location.
 ///
-/// The debugger currently supports function-level breakpoints, so source breakpoints resolve to a
-/// single exported function name (entrypoint) when possible.
+/// Supports exact line breakpoints.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SourceBreakpointResolution {
     /// The requested 1-based source line.
@@ -111,7 +110,7 @@ pub struct SourceBreakpointResolution {
     pub line: u32,
     /// Whether the breakpoint binding is considered exact/high-confidence.
     pub verified: bool,
-    /// Exported function (entrypoint) name to bind a runtime breakpoint to.
+    /// Formatted file:line location for the debugger engine.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub function: Option<String>,
     /// Stable reason code when `verified` is false.
@@ -546,19 +545,15 @@ impl SourceMap {
         self.offsets.range(range.clone()).next().is_some()
     }
 
-    /// Resolve source breakpoints for a source file into exported contract functions using DWARF line mappings.
+    /// Resolve source breakpoints for a source file into exact executable lines using DWARF line mappings.
     ///
     /// This relies on:
     /// - DWARF line program mappings (already loaded into this `SourceMap`)
-    /// - WASM code section entry ranges (offset -> function index)
-    /// - WASM export section (function index -> exported names)
-    /// - The provided `exported_functions` allowlist, usually derived from `inspect --functions`.
     pub fn resolve_source_breakpoints(
         &self,
-        wasm_bytes: &[u8],
+        _wasm_bytes: &[u8],
         source_path: &Path,
         requested_lines: &[u32],
-        exported_functions: &HashSet<String>,
         max_forward: Option<u32>,
     ) -> Vec<SourceBreakpointResolution> {
         let max_forward = max_forward.unwrap_or(20);
@@ -580,26 +575,6 @@ impl SourceMap {
                 })
                 .collect();
         }
-
-        let wasm_index = match WasmIndex::parse(wasm_bytes) {
-            Ok(index) => index,
-            Err(e) => {
-                return requested_lines
-                    .iter()
-                    .map(|line| SourceBreakpointResolution {
-                        requested_line: *line,
-                        line: *line,
-                        verified: false,
-                        function: None,
-                        reason_code: "WASM_PARSE_ERROR".to_string(),
-                        message: format!(
-                            "[WASM_PARSE_ERROR] Failed to parse WASM for breakpoint resolution: {}",
-                            e
-                        ),
-                    })
-                    .collect();
-            }
-        };
 
         let requested_norm = normalize_path_for_match(source_path);
         let filename_ambiguous = is_filename_ambiguous(
@@ -646,20 +621,6 @@ impl SourceMap {
                 .collect();
         }
 
-        // Pre-compute per-function line spans for this file (for disambiguation).
-        let mut function_spans: HashMap<u32, (u32, u32)> = HashMap::new();
-        for (line, offsets) in line_to_offsets.iter() {
-            for offset in offsets {
-                if let Some(function_index) = wasm_index.function_index_for_offset(*offset) {
-                    let entry = function_spans
-                        .entry(function_index)
-                        .or_insert((*line, *line));
-                    entry.0 = entry.0.min(*line);
-                    entry.1 = entry.1.max(*line);
-                }
-            }
-        }
-
         requested_lines
             .iter()
             .map(|requested_line| {
@@ -694,117 +655,22 @@ impl SourceMap {
                     }
                 };
 
-                let mut candidate_entrypoints: HashSet<String> = HashSet::new();
-                let mut non_exported_function_indices: HashSet<u32> = HashSet::new();
-
-                for offset in offsets {
-                    let Some(function_index) = wasm_index.function_index_for_offset(*offset) else {
-                        continue;
-                    };
-
-                    let Some(export_names) = wasm_index.export_names_for_function(function_index)
-                    else {
-                        non_exported_function_indices.insert(function_index);
-                        continue;
-                    };
-
-                    let mut any_allowed = false;
-                    for name in export_names {
-                        if exported_functions.contains(name) {
-                            any_allowed = true;
-                            candidate_entrypoints.insert(name.clone());
-                        }
-                    }
-
-                    if !any_allowed {
-                        non_exported_function_indices.insert(function_index);
-                    }
-                }
-
-                if candidate_entrypoints.is_empty() {
-                    if !non_exported_function_indices.is_empty() {
-                        let mut indices: Vec<u32> = non_exported_function_indices.into_iter().collect();
-                        indices.sort_unstable();
-                        indices.truncate(5);
-                        return SourceBreakpointResolution {
-                            requested_line: *requested_line,
-                            line: resolved_line,
-                            verified: false,
-                            function: None,
-                            reason_code: "NOT_EXPORTED".to_string(),
-                            message: format!(
-                                "[NOT_EXPORTED] Line maps to non-entrypoint WASM function(s) {:?}; only exported contract entrypoints can be targeted.",
-                                indices
-                            ),
-                        };
-                    }
-
-                    return SourceBreakpointResolution {
-                        requested_line: *requested_line,
-                        line: resolved_line,
-                        verified: false,
-                        function: None,
-                        reason_code: "UNMAPPABLE".to_string(),
-                        message: "[UNMAPPABLE] Unable to map line to an exported contract entrypoint.".to_string(),
-                    };
-                }
-
-                let mut candidates: Vec<String> = candidate_entrypoints.into_iter().collect();
-                candidates.sort();
-
-                let chosen = if candidates.len() == 1 {
-                    Some(candidates[0].clone())
-                } else {
-                    // Disambiguate using per-function line spans within this file.
-                    let mut matching: Vec<String> = Vec::new();
-                    for candidate in candidates.iter() {
-                        if let Some(function_index) =
-                            wasm_index.function_index_for_export(candidate)
-                        {
-                            if let Some((min_line, max_line)) = function_spans.get(&function_index)
-                            {
-                                if *requested_line >= *min_line && *requested_line <= *max_line {
-                                    matching.push(candidate.clone());
-                                }
-                            }
-                        }
-                    }
-
-                    if matching.len() == 1 {
-                        Some(matching.remove(0))
-                    } else {
-                        None
-                    }
-                };
-
-                let Some(function) = chosen else {
-                    return SourceBreakpointResolution {
-                        requested_line: *requested_line,
-                        line: resolved_line,
-                        verified: false,
-                        function: None,
-                        reason_code: "AMBIGUOUS".to_string(),
-                        message: format!(
-                            "[AMBIGUOUS] Source line could map to multiple entrypoints {:?}.",
-                            candidates
-                        ),
-                    };
-                };
+                let location = format!("{}:{}", source_path.to_string_lossy(), resolved_line);
 
                 SourceBreakpointResolution {
                     requested_line: *requested_line,
                     line: resolved_line,
                     verified: true,
-                    function: Some(function.clone()),
+                    function: Some(location),
                     reason_code: if adjusted {
                         "ADJUSTED".to_string()
                     } else {
                         "OK".to_string()
                     },
                     message: if adjusted {
-                        format!("Adjusted to line {} and mapped to entrypoint '{}'.", resolved_line, function)
+                        format!("Adjusted to executable line {}.", resolved_line)
                     } else {
-                        format!("Mapped to entrypoint '{}'.", function)
+                        "Mapped to exact source line.".to_string()
                     },
                 }
             })
@@ -1278,115 +1144,5 @@ mod tests {
             "stale mappings must be cleared on cache miss"
         );
     }
-
-    #[test]
-    fn resolve_source_breakpoints_reports_not_exported_for_private_function() {
-        let wasm = wasm_with_functions_and_exports(&[("entrypoint", 0)], 2);
-        let index = WasmIndex::parse(&wasm).unwrap();
-        let private_offset = index.function_bodies[1].0.start;
-        let source_path = PathBuf::from("contract.rs");
-
-        let mut sm = SourceMap::new();
-        sm.add_mapping(
-            private_offset,
-            SourceLocation {
-                file: source_path.clone(),
-                line: 7,
-                column: None,
-            },
-        );
-
-        let exported_functions = HashSet::from([String::from("entrypoint")]);
-        let resolved =
-            sm.resolve_source_breakpoints(&wasm, &source_path, &[7], &exported_functions, None);
-
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].requested_line, 7);
-        assert_eq!(resolved[0].line, 7);
-        assert!(!resolved[0].verified);
-        assert_eq!(resolved[0].function, None);
-        assert_eq!(resolved[0].reason_code, "NOT_EXPORTED");
-        assert!(resolved[0].message.contains("[NOT_EXPORTED]"));
-        assert!(resolved[0].message.contains("[1]"));
-    }
-
-    #[test]
-    fn resolve_source_breakpoints_reports_ambiguous_for_multiple_entrypoints() {
-        let wasm = wasm_with_functions_and_exports(&[("alpha", 0), ("beta", 1)], 2);
-        let index = WasmIndex::parse(&wasm).unwrap();
-        let alpha_offset = index.function_bodies[0].0.start;
-        let beta_offset = index.function_bodies[1].0.start;
-        let source_path = PathBuf::from("contract.rs");
-
-        let mut sm = SourceMap::new();
-        sm.add_mapping(
-            alpha_offset,
-            SourceLocation {
-                file: source_path.clone(),
-                line: 10,
-                column: None,
-            },
-        );
-        sm.add_mapping(
-            beta_offset,
-            SourceLocation {
-                file: source_path.clone(),
-                line: 10,
-                column: None,
-            },
-        );
-
-        let exported_functions = HashSet::from([String::from("alpha"), String::from("beta")]);
-        let resolved =
-            sm.resolve_source_breakpoints(&wasm, &source_path, &[10], &exported_functions, None);
-
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].requested_line, 10);
-        assert_eq!(resolved[0].line, 10);
-        assert!(!resolved[0].verified);
-        assert_eq!(resolved[0].function, None);
-        assert_eq!(resolved[0].reason_code, "AMBIGUOUS");
-        assert!(resolved[0].message.contains("[AMBIGUOUS]"));
-        assert!(resolved[0].message.contains("alpha"));
-        assert!(resolved[0].message.contains("beta"));
-    }
-
-    #[test]
-    fn resolve_source_breakpoints_disambiguates_same_filename_by_parent_directory() {
-        let wasm = wasm_with_functions_and_exports(&[("alpha", 0), ("beta", 1)], 2);
-        let index = WasmIndex::parse(&wasm).unwrap();
-        let alpha_offset = index.function_bodies[0].0.start;
-        let beta_offset = index.function_bodies[1].0.start;
-
-        let mut sm = SourceMap::new();
-        sm.add_mapping(
-            alpha_offset,
-            SourceLocation {
-                file: PathBuf::from("/workspace/crate_a/src/lib.rs"),
-                line: 10,
-                column: None,
-            },
-        );
-        sm.add_mapping(
-            beta_offset,
-            SourceLocation {
-                file: PathBuf::from("/workspace/crate_b/src/lib.rs"),
-                line: 10,
-                column: None,
-            },
-        );
-
-        let exported_functions = HashSet::from([String::from("alpha"), String::from("beta")]);
-        let requested_path = PathBuf::from("crate_a/src/lib.rs");
-        let resolved =
-            sm.resolve_source_breakpoints(&wasm, &requested_path, &[10], &exported_functions, None);
-
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].function.as_deref(), Some("alpha"));
-        assert!(
-            resolved[0].reason_code == "OK" || resolved[0].reason_code.starts_with("HEURISTIC"),
-            "unexpected reason code: {}",
-            resolved[0].reason_code
-        );
-    }
 }
+

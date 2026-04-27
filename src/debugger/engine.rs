@@ -1,8 +1,8 @@
 use crate::debugger::breakpoint::{BreakpointManager, BreakpointSpec};
-use crate::debugger::breakpoint::{BreakpointManager, ConditionEvaluator};
+use crate::debugger::breakpoint::ConditionEvaluator;
 use crate::debugger::instruction_pointer::StepMode;
 use crate::debugger::source_map::{SourceLocation, SourceMap};
-use crate::debugger::state::DebugState;
+use crate::debugger::state::{DebugState, PauseReason};
 use crate::debugger::stepper::Stepper;
 use crate::output::InvocationReason;
 use crate::plugin::{EventContext, ExecutionEvent};
@@ -266,6 +266,7 @@ impl DebuggerEngine {
         self.paused = false;
 
         if let Ok(mut state) = self.state.lock() {
+            state.clear_pause_reason();
             state.set_current_function(
                 function.to_string(),
                 args.map(str::to_string),
@@ -292,7 +293,7 @@ impl DebuggerEngine {
 
         if check_breakpoints {
             let evaluator = self.create_condition_evaluator();
-            match self.breakpoints.should_break_with_context(function, &evaluator) {
+            match self.breakpoints.should_break_with_context(function, evaluator.as_ref()) {
                 Ok((should_pause, log_message)) => {
                     if let Some(msg) = log_message {
                         // Log point hit - output message but don't pause
@@ -310,6 +311,7 @@ impl DebuggerEngine {
                 Err(e) => {
                     tracing::warn!("Breakpoint evaluation failed: {}", e);
                 }
+            }
             let storage = self.executor.get_storage_snapshot().unwrap_or_default();
             let evaluator = EngineConditionEvaluator::new(storage);
             let (should_pause, log_output) = self
@@ -350,6 +352,18 @@ impl DebuggerEngine {
 
         if let Err(ref e) = result {
             tracing::error!("Execution failed: {}", e);
+            self.paused = true;
+            if let Ok(mut state) = self.state.lock() {
+                state.set_pause_reason(PauseReason::Panic);
+            }
+            let mut plugin_ctx = EventContext::new();
+            plugin_ctx.is_paused = true;
+            crate::plugin::registry::dispatch_global_event(
+                &ExecutionEvent::ExecutionPaused {
+                    reason: PauseReason::Panic.as_str().to_string(),
+                },
+                &mut plugin_ctx,
+            );
             if let Ok(state) = self.state.lock() {
                 state.call_stack().display();
             }
@@ -371,6 +385,7 @@ impl DebuggerEngine {
             );
             state.call_stack_mut().clear();
             state.call_stack_mut().push(function.to_string(), None);
+            state.set_pause_reason(PauseReason::Breakpoint);
         }
 
         crate::logging::log_breakpoint(function);
@@ -393,7 +408,7 @@ impl DebuggerEngine {
         );
         crate::plugin::registry::dispatch_global_event(
             &ExecutionEvent::ExecutionPaused {
-                reason: "breakpoint".to_string(),
+                reason: PauseReason::Breakpoint.as_str().to_string(),
             },
             &mut plugin_ctx,
         );
@@ -410,6 +425,7 @@ impl DebuggerEngine {
             );
             state.call_stack_mut().clear();
             state.call_stack_mut().push(function.to_string(), None);
+            state.set_pause_reason(PauseReason::UserInterrupt);
         }
 
         self.paused = true;
@@ -491,6 +507,13 @@ impl DebuggerEngine {
             false
         };
         self.paused = stepped;
+        if let Ok(mut state) = self.state.lock() {
+            if stepped {
+                state.set_pause_reason(PauseReason::StepBoundary);
+            } else {
+                state.set_pause_reason(PauseReason::EndOfExecution);
+            }
+        }
         Ok(stepped)
     }
 
@@ -506,6 +529,13 @@ impl DebuggerEngine {
             false
         };
         self.paused = stepped;
+        if let Ok(mut state) = self.state.lock() {
+            if stepped {
+                state.set_pause_reason(PauseReason::StepBoundary);
+            } else {
+                state.set_pause_reason(PauseReason::EndOfExecution);
+            }
+        }
         Ok(stepped)
     }
 
@@ -521,6 +551,13 @@ impl DebuggerEngine {
             false
         };
         self.paused = stepped;
+        if let Ok(mut state) = self.state.lock() {
+            if stepped {
+                state.set_pause_reason(PauseReason::StepBoundary);
+            } else {
+                state.set_pause_reason(PauseReason::EndOfExecution);
+            }
+        }
         Ok(stepped)
     }
 
@@ -542,6 +579,13 @@ impl DebuggerEngine {
         };
 
         self.paused = paused;
+        if let Ok(mut state) = self.state.lock() {
+            if paused {
+                state.set_pause_reason(PauseReason::StepBoundary);
+            } else {
+                state.set_pause_reason(PauseReason::EndOfExecution);
+            }
+        }
         Ok(StepOverResult { paused, location })
     }
 
@@ -557,6 +601,13 @@ impl DebuggerEngine {
             false
         };
         self.paused = stepped;
+        if let Ok(mut state) = self.state.lock() {
+            if stepped {
+                state.set_pause_reason(PauseReason::StepBoundary);
+            } else {
+                state.set_pause_reason(PauseReason::EndOfExecution);
+            }
+        }
         Ok(stepped)
     }
 
@@ -572,6 +623,13 @@ impl DebuggerEngine {
             false
         };
         self.paused = stepped;
+        if let Ok(mut state) = self.state.lock() {
+            if stepped {
+                state.set_pause_reason(PauseReason::StepBoundary);
+            } else {
+                state.set_pause_reason(PauseReason::EndOfExecution);
+            }
+        }
         Ok(stepped)
     }
 
@@ -584,6 +642,7 @@ impl DebuggerEngine {
         if let Ok(mut state) = self.state.lock() {
             self.stepper.start(mode, &mut state);
             self.paused = true;
+            state.set_pause_reason(PauseReason::StepBoundary);
         }
 
         Ok(())
@@ -594,6 +653,7 @@ impl DebuggerEngine {
         self.paused = false;
         if let Ok(mut state) = self.state.lock() {
             self.stepper.continue_execution(&mut state);
+            state.clear_pause_reason();
         }
 
         let mut plugin_ctx = EventContext::new();
@@ -615,6 +675,7 @@ impl DebuggerEngine {
                 None,
                 Some(InvocationReason::Entrypoint),
             );
+            state.set_pause_reason(PauseReason::Breakpoint);
             state.call_stack().display();
         }
 
@@ -629,10 +690,18 @@ impl DebuggerEngine {
         );
         crate::plugin::registry::dispatch_global_event(
             &ExecutionEvent::ExecutionPaused {
-                reason: "breakpoint".to_string(),
+                reason: PauseReason::Breakpoint.as_str().to_string(),
             },
             &mut plugin_ctx,
         );
+    }
+
+    pub fn pause_reason(&self) -> Option<PauseReason> {
+        self.state.lock().ok().and_then(|state| state.pause_reason())
+    }
+
+    pub fn pause_reason_label(&self) -> Option<&'static str> {
+        self.pause_reason().map(PauseReason::as_str)
     }
 
     pub fn is_paused(&self) -> bool {

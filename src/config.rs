@@ -13,7 +13,47 @@ pub struct Config {
     pub debug: DebugConfig,
     #[serde(default)]
     pub output: OutputConfig,
+    #[serde(default)]
+    pub keybindings: KeybindingsConfig,
+    #[serde(default)]
+    pub repl_settings: ReplSettings,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ReplSettings {
+    #[serde(default)]
+    pub history_file: Option<String>,
+    #[serde(default)]
+    pub save_history: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindingsConfig {
+    #[serde(default = "default_step_key")]
+    pub step: String,
+    #[serde(default = "default_continue_key")]
+    pub continue_exec: String,
+    #[serde(default = "default_inspect_key")]
+    pub inspect: String,
+    #[serde(default = "default_quit_key")]
+    pub quit: String,
+}
+
+impl Default for KeybindingsConfig {
+    fn default() -> Self {
+        Self {
+            step: default_step_key(),
+            continue_exec: default_continue_key(),
+            inspect: default_inspect_key(),
+            quit: default_quit_key(),
+        }
+    }
+}
+
+fn default_step_key() -> String { "s".to_string() }
+fn default_continue_key() -> String { "c".to_string() }
+fn default_inspect_key() -> String { "i".to_string() }
+fn default_quit_key() -> String { "q".to_string() }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DebugConfig {

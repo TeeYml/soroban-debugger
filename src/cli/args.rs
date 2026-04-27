@@ -65,6 +65,14 @@ pub enum SymbolicProfile {
     Deep,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+pub enum SnapshotCompression {
+    #[default]
+    None,
+    Gzip,
+    Zstd,
+}
+
 impl Verbosity {
     /// Convert verbosity to log level string for RUST_LOG
     pub fn to_log_level(self) -> String {
@@ -224,6 +232,14 @@ pub enum Commands {
     #[command(subcommand_help_heading = "Developer Utilities")]
     HistoryPrune(HistoryPruneArgs),
 
+    /// Generate a trust and security report for all loaded plugins
+    #[command(subcommand_help_heading = "Developer Utilities")]
+    PluginTrustReport(PluginTrustReportArgs),
+
+    /// Inspect a specific plugin's capabilities and metadata
+    #[command(subcommand_help_heading = "Developer Utilities")]
+    PluginInspect(PluginInspectArgs),
+
     /// Report runtime health and diagnostics for troubleshooting
     Doctor(DoctorArgs),
 
@@ -370,6 +386,10 @@ pub struct RunArgs {
     /// Export storage state to JSON file after execution
     #[arg(long)]
     pub export_storage: Option<PathBuf>,
+
+    /// Compression format for exported storage snapshots
+    #[arg(long, value_enum, default_value_t = SnapshotCompression::None)]
+    pub export_compression: SnapshotCompression,
 
     /// Import storage state from JSON file before execution
     #[arg(long)]
@@ -1192,6 +1212,18 @@ pub struct ServerArgs {
     /// Filter storage view to only show keys matching pattern (repeatable)
     #[arg(long, value_name = "PATTERN")]
     pub storage_filter: Vec<String>,
+
+    /// Show contract events emitted during execution
+    #[arg(long)]
+    pub show_events: bool,
+
+    /// Filter events by topic pattern (repeatable)
+    #[arg(long, value_name = "PATTERN")]
+    pub event_filter: Vec<String>,
+
+    /// Mock cross-contract return: CONTRACT_ID.function=return_value (repeatable)
+    #[arg(long, value_name = "CONTRACT_ID.function=return_value")]
+    pub mock: Vec<String>,
 }
 
 #[derive(Parser)]
@@ -1223,6 +1255,10 @@ pub struct RemoteArgs {
     /// TLS CA certificate file path (optional, for self-signed certs)
     #[arg(long)]
     pub tls_ca: Option<PathBuf>,
+
+    /// Optional label for the remote session (helps identify sessions in logs)
+    #[arg(long)]
+    pub session_label: Option<String>,
 
     /// Function arguments as JSON array
     #[arg(short, long)]
@@ -1372,6 +1408,14 @@ pub struct ScenarioArgs {
     /// Use 0 to disable the timeout entirely.
     #[arg(long)]
     pub timeout: Option<u64>,
+
+    /// Only run steps that have at least one of these tags (comma-separated)
+    #[arg(long)]
+    pub tags: Option<String>,
+
+    /// Skip steps that have any of these tags (comma-separated)
+    #[arg(long)]
+    pub exclude_tags: Option<String>,
 }
 
 /// Arguments for the doctor/health command
@@ -1396,4 +1440,21 @@ pub struct DoctorArgs {
     /// Optional path to a VS Code extension `package.json` to report version hints
     #[arg(long, value_name = "FILE")]
     pub vscode_manifest: Option<PathBuf>,
+}
+
+#[derive(Parser, Debug, Clone)]
+pub struct PluginTrustReportArgs {
+    /// Output format (pretty, json)
+    #[arg(long, value_enum, default_value = "pretty")]
+    pub format: OutputFormat,
+}
+
+#[derive(Parser, Debug, Clone)]
+pub struct PluginInspectArgs {
+    /// Name of the plugin to inspect
+    pub name: String,
+
+    /// Output format (pretty, json)
+    #[arg(long, value_enum, default_value = "pretty")]
+    pub format: OutputFormat,
 }
