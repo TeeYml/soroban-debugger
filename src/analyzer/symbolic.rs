@@ -150,6 +150,16 @@ pub struct SymbolicReportMetadata {
     /// `--replay` (or `--seed`) on a subsequent run to reproduce the identical
     /// exploration order.
     pub seed: Option<u64>,
+    /// Coverage metrics: unique functions reached during symbolic exploration.
+    pub unique_functions_reached: usize,
+    /// Coverage metrics: total functions available in the WASM module.
+    pub total_functions_available: usize,
+    /// Coverage metrics: approximate branch coverage indicator (branches touched).
+    pub branches_touched: usize,
+    /// Coverage metrics: duplicate input combinations suppressed.
+    pub duplicates_suppressed: usize,
+    /// Coverage metrics: whether the exploration hit the path cap.
+    pub exploration_cap_reached: bool,
     pub coverage_fraction: f32,
     pub uncovered_regions: Vec<String>,
 }
@@ -324,6 +334,10 @@ impl SymbolicAnalyzer {
         }
         let deadline = Instant::now();
 
+        // Extract all available functions for coverage analysis
+        let all_functions = crate::utils::wasm::parse_functions(wasm).unwrap_or_default();
+        let total_functions = all_functions.len();
+
         let mut report = SymbolicReport {
             function: function.to_string(),
             paths_explored: 0,
@@ -339,16 +353,23 @@ impl SymbolicAnalyzer {
                 truncated_by_timeout: false,
                 truncation_reasons: Vec::new(),
                 seed: config.seed,
+                unique_functions_reached: 0,
+                total_functions_available: total_functions,
+                branches_touched: 0,
+                duplicates_suppressed: 0,
+                exploration_cap_reached: false,
                 coverage_fraction: 0.0,
                 uncovered_regions: Vec::new(),
             },
         };
 
         let mut seen_inputs = HashSet::new();
+        let mut reached_functions = HashSet::new();
 
         for args_json in &generated_inputs.combinations {
             if report.paths_explored >= config.max_paths {
                 report.metadata.truncated_by_path_cap = true;
+                report.metadata.exploration_cap_reached = true;
                 break;
             }
 
@@ -394,6 +415,8 @@ impl SymbolicAnalyzer {
                     Self::record_outcome(&mut report, &mut seen_inputs, args_json, Ok(val), trace, config);
                 }
                 Err(err) => {
+                    // Track the target function as reached
+                    reached_functions.insert(function.to_string());
                     Self::record_outcome(
                         &mut report,
                         &mut seen_inputs,
@@ -404,11 +427,20 @@ impl SymbolicAnalyzer {
                     );
                 }
             }
+            
             report.paths_explored += 1;
         }
 
         report.metadata.attempted_input_combinations = report.paths_explored;
         report.metadata.distinct_paths_recorded = report.paths.len();
+        report.metadata.unique_functions_reached = reached_functions.len();
+        // Duplicates = total attempts - distinct paths recorded
+        report.metadata.duplicates_suppressed = report.paths_explored.saturating_sub(report.paths.len());
+        
+        // Estimate branches touched: each distinct path represents at least one branch decision
+        // This is a conservative estimate - in reality, each path may touch multiple branches
+        report.metadata.branches_touched = report.paths.len();
+        
         if report.metadata.truncated_by_input_cap {
             report.metadata.truncation_reasons.push(format!(
                 "input combination cap reached at {} generated combinations",
@@ -843,6 +875,39 @@ impl SymbolicAnalyzer {
             report.metadata.truncated_by_timeout
         )
         .unwrap();
+        
+        // Add coverage metrics to TOML
+        writeln!(
+            toml,
+            "unique_functions_reached = {}",
+            report.metadata.unique_functions_reached
+        )
+        .unwrap();
+        writeln!(
+            toml,
+            "total_functions_available = {}",
+            report.metadata.total_functions_available
+        )
+        .unwrap();
+        writeln!(
+            toml,
+            "branches_touched = {}",
+            report.metadata.branches_touched
+        )
+        .unwrap();
+        writeln!(
+            toml,
+            "duplicates_suppressed = {}",
+            report.metadata.duplicates_suppressed
+        )
+        .unwrap();
+        writeln!(
+            toml,
+            "exploration_cap_reached = {}",
+            report.metadata.exploration_cap_reached
+        )
+        .unwrap();
+        
         match report.metadata.seed {
             Some(seed) => writeln!(toml, "seed = {}", seed).unwrap(),
             None => writeln!(
@@ -987,6 +1052,11 @@ mod tests {
                 truncated_by_timeout: false,
                 truncation_reasons: Vec::new(),
                 seed: None,
+                unique_functions_reached: 0,
+                total_functions_available: 0,
+                branches_touched: 0,
+                duplicates_suppressed: 0,
+                exploration_cap_reached: false,
                 coverage_fraction: 0.0,
                 uncovered_regions: Vec::new(),
             },
@@ -1031,6 +1101,11 @@ mod tests {
                 truncated_by_timeout: false,
                 truncation_reasons: Vec::new(),
                 seed: None,
+                unique_functions_reached: 0,
+                total_functions_available: 0,
+                branches_touched: 0,
+                duplicates_suppressed: 0,
+                exploration_cap_reached: false,
                 coverage_fraction: 0.0,
                 uncovered_regions: Vec::new(),
             },
@@ -1214,6 +1289,11 @@ mod tests {
                     "input combination cap reached at 64 generated combinations".to_string(),
                 ],
                 seed: None,
+                unique_functions_reached: 1,
+                total_functions_available: 5,
+                branches_touched: 1,
+                duplicates_suppressed: 0,
+                exploration_cap_reached: false,
                 coverage_fraction: 0.0,
                 uncovered_regions: Vec::new(),
             },
@@ -1318,6 +1398,109 @@ mod tests {
     }
 
     #[test]
+    fn analyze_with_config_tracks_coverage_metrics() {
+        let analyzer = SymbolicAnalyzer::new();
+        let wasm = wasm_with_import_and_exported_local();
+        let config = SymbolicConfig {
+            max_paths: 10,
+            max_input_combinations: 36,
+            timeout_secs: 30,
+            max_breadth: 5,
+            max_depth: 3,
+            seed: None,
+            storage_seed: None,
+        };
+
+        let report = analyzer
+            .analyze_with_config(&wasm, "entry", &config)
+            .expect("symbolic analysis should complete");
+
+        // Verify coverage metrics are populated
+        assert!(
+            report.metadata.total_functions_available > 0,
+            "Should detect available functions"
+        );
+        assert!(
+            report.metadata.unique_functions_reached > 0,
+            "Should track reached functions"
+        );
+        assert!(
+            report.metadata.unique_functions_reached <= report.metadata.total_functions_available,
+            "Reached functions cannot exceed available functions"
+        );
+        assert!(
+            report.metadata.branches_touched > 0,
+            "Should estimate branches touched"
+        );
+        // Branches touched should equal distinct paths recorded
+        assert_eq!(
+            report.metadata.branches_touched,
+            report.metadata.distinct_paths_recorded,
+            "Branches touched should equal distinct paths"
+        );
+    }
+
+    #[test]
+    fn analyze_with_config_tracks_duplicates() {
+        let analyzer = SymbolicAnalyzer::new();
+        let wasm = wasm_with_import_and_exported_local();
+        let config = SymbolicConfig {
+            max_paths: 100,
+            max_input_combinations: 10, // Small cap to force duplicates
+            timeout_secs: 30,
+            max_breadth: 3,
+            max_depth: 2,
+            seed: None,
+            storage_seed: None,
+        };
+
+        let report = analyzer
+            .analyze_with_config(&wasm, "entry", &config)
+            .expect("symbolic analysis should complete");
+
+        // Verify duplicate tracking
+        assert!(
+            report.paths_explored >= report.metadata.distinct_paths_recorded,
+            "Explored paths should be >= distinct paths"
+        );
+        let calculated_duplicates =
+            report.paths_explored.saturating_sub(report.paths.len());
+        assert_eq!(
+            report.metadata.duplicates_suppressed, calculated_duplicates,
+            "Duplicates should match calculated value"
+        );
+    }
+
+    #[test]
+    fn analyze_with_config_sets_exploration_cap_flag() {
+        let analyzer = SymbolicAnalyzer::new();
+        let wasm = wasm_with_import_and_exported_local();
+        let config = SymbolicConfig {
+            max_paths: 2, // Very low cap to force hitting the limit
+            max_input_combinations: 36,
+            timeout_secs: 30,
+            max_breadth: 5,
+            max_depth: 3,
+            seed: None,
+            storage_seed: None,
+        };
+
+        let report = analyzer
+            .analyze_with_config(&wasm, "entry", &config)
+            .expect("symbolic analysis should complete");
+
+        assert!(
+            report.metadata.exploration_cap_reached,
+            "Should flag when path cap is reached"
+        );
+        assert!(
+            report.metadata.truncated_by_path_cap,
+            "Should be truncated by path cap"
+        );
+        assert_eq!(
+            report.paths_explored, 2,
+            "Should stop at path cap"
+        );
     fn test_generate_seeds_complex_types() {
         let analyzer = SymbolicAnalyzer;
         let config = SymbolicConfig::default();
